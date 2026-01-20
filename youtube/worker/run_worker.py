@@ -6,7 +6,7 @@ from worker.activities import extract_metadata
 
 async def main():
     # Connect to temporal Server
-    client = await Client.connect("temporal:7233")
+    client = await Client.connect("localhost:7233")
 
     worker = Worker(
         client,
