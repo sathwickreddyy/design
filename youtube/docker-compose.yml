@@ -1,0 +1,34 @@
+services:
+  # 1. The Persistence Layer
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal_password
+      POSTGRES_DB: temporal
+    ports: ["5432:5432"]
+
+  # 2. The Brain: Temporal Cluster
+  temporal:
+    image: temporalio/auto-setup:1.22.0
+    depends_on: [db]
+    environment:
+      - DB=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal_password
+      - POSTGRES_SEEDS=db
+    ports:
+      - "7233:7233" # gRPC for Workers/API
+      - "8080:8080" # Web UI (Visualizing the DAG)
+
+  # 3. The Storage: S3 Mock
+  minio:
+    image: quay.io/minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # UI
