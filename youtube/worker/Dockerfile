@@ -7,5 +7,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY . .
-CMD ["python", "run_worker.py"]
+# Preserve worker package structure so imports like `worker.activities` resolve
+COPY worker/ ./worker/
+
+# Ensure shared package is available for imports
+COPY shared/ ./shared/
+
+# Run the workflow worker entrypoint inside the worker package
+CMD ["python", "-m", "worker.run_worker"]

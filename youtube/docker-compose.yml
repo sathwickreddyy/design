@@ -44,7 +44,9 @@ services:
 
   # 5. Worker (commented out - run locally for development)
   worker:
-    build: ./worker
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     depends_on: [temporal, minio]
     environment:
       - MINIO_ENDPOINT=http://minio:9000

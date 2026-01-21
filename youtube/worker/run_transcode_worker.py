@@ -4,6 +4,7 @@ Run this separately from metadata extraction worker for horizontal scaling
 """
 import asyncio
 import logging
+import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
@@ -13,8 +14,9 @@ logging.basicConfig(level=logging.INFO)
 
 
 async def main():
-    # Connect to Temporal server
-    client = await Client.connect("localhost:7233")
+    # Connect to Temporal server (use env var inside container)
+    temporal_address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
+    client = await Client.connect(temporal_address)
     
     # Create worker that only handles transcoding activities
     # CPU-heavy, slow operations - scale independently
