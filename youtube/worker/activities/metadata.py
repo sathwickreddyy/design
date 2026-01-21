@@ -1,3 +1,7 @@
+"""
+Metadata extraction activity
+Fast, I/O-bound operations for extracting video metadata using ffprobe
+"""
 import json
 import subprocess
 import tempfile

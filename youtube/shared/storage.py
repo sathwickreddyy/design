@@ -17,7 +17,8 @@ class MinIOStorage:
         endpoint_url: str = None,
         access_key: str = None,
         secret_key: str = None,
-        region_name: str = "us-east-1"
+        region_name: str = "us-east-1",
+        auto_create_buckets: bool = True
     ):
         """
         Initialize MinIO client
@@ -40,6 +41,23 @@ class MinIOStorage:
             aws_secret_access_key=self.secret_key,
             region_name=region_name
         )
+        
+        # Auto-create required buckets on initialization
+        if auto_create_buckets:
+            self.ensure_buckets()
+    
+    def ensure_buckets(self, buckets: list = None) -> None:
+        """
+        Ensure required buckets exist, create if missing
+        
+        Args:
+            buckets: List of bucket names to ensure. Defaults to ['videos', 'encoded']
+        """
+        if buckets is None:
+            buckets = ['videos', 'encoded']
+        
+        for bucket in buckets:
+            self.create_bucket(bucket)
     
     def create_bucket(self, bucket_name: str) -> bool:
         """

@@ -1,21 +1,25 @@
 import asyncio
+import logging
 from temporalio.client import Client
 from temporalio.worker import Worker
 from shared.workflows import VideoWorkflow
-from worker.activities import extract_metadata
+
+logging.basicConfig(level=logging.INFO)
 
 async def main():
     # Connect to temporal Server
     client = await Client.connect("localhost:7233")
 
+    # Workflow-only worker: Orchestrates the workflow logic
+    # Does NOT execute activities - just coordinates them
     worker = Worker(
         client,
-        task_queue="video-tasks",
+        task_queue="video-tasks",  # Workflow execution queue
         workflows=[VideoWorkflow],
-        activities=[extract_metadata],
+        activities=[],  # No activities - just workflow orchestration
     )
 
-    print("Worker is starting.... Polling for tasks.")
+    logging.info("Workflow Worker started - polling 'video-tasks' for workflow execution...")
     await worker.run()
 
 if __name__ == "__main__":
