@@ -41,3 +41,13 @@ services:
       - TEMPORAL_ADDRESS=temporal:7233
     depends_on:
       - temporal
+
+  # 5. Worker (commented out - run locally for development)
+  worker:
+    build: ./worker
+    depends_on: [temporal, minio]
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - TEMPORAL_ADDRESS=temporal:7233
