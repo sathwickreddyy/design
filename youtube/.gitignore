@@ -3,3 +3,5 @@ __pycache__/
 # legacy patterns (kept for compatibility)
 */__pycache__/
 */__pycache__/*
+youtube-local-venv/
+youtube-local-venv/*
