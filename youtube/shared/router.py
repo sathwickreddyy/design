@@ -229,12 +229,13 @@ async def download_video(video_id: str, resolution: str = "720p"):
     
     Args:
         video_id: The video ID
-        resolution: Resolution (default: 720p)
+        resolution: Resolution (320p, 480p, 720p, 1080p)
         
     Returns:
         - video_id: The video ID
         - resolution: Requested resolution
         - download_url: Pre-signed S3 URL (valid for 1 hour)
+        - available_resolutions: List of all available resolutions for this video
     """
     # Validate video_id
     if not video_id or not video_id.startswith("video_"):
@@ -244,7 +245,7 @@ async def download_video(video_id: str, resolution: str = "720p"):
         )
     
     # Validate resolution
-    valid_resolutions = ["720p", "480p", "1080p"]
+    valid_resolutions = ["320p", "480p", "720p", "1080p"]
     if resolution not in valid_resolutions:
         raise HTTPException(
             status_code=400, 
@@ -252,13 +253,19 @@ async def download_video(video_id: str, resolution: str = "720p"):
         )
     
     try:
+        # Check which resolutions are available
+        available = []
+        for res in valid_resolutions:
+            if storage.file_exists("encoded", f"{video_id}_{res}.mp4"):
+                available.append(res)
+        
         object_name = f"{video_id}_{resolution}.mp4"
         
-        # Check if file exists
+        # Check if requested resolution exists
         if not storage.file_exists("encoded", object_name):
             raise HTTPException(
                 status_code=404, 
-                detail="Encoded video not found. Processing may still be in progress."
+                detail=f"Resolution {resolution} not available. Available: {available or 'None (still processing)'}"
             )
         
         # Generate pre-signed URL (valid for 1 hour)
@@ -275,7 +282,8 @@ async def download_video(video_id: str, resolution: str = "720p"):
             "video_id": video_id,
             "resolution": resolution,
             "download_url": url,
-            "expires_in": "1 hour"
+            "expires_in": "1 hour",
+            "available_resolutions": available,
         }
         
     except HTTPException:

@@ -142,7 +142,7 @@ services:
       - WORKER_TYPE=transcode
     command: ["python", "-m", "worker.run_transcode_worker"]
     deploy:
-      replicas: 1
+      replicas: 2
 
 volumes:
   postgres_data:

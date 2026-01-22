@@ -1,6 +1,13 @@
 """
-Transcoding activities for video processing
-CPU-heavy, slow operations for video transcoding using ffmpeg
+Transcoding activities for video processing.
+
+Purpose: CPU-heavy video transcoding using ffmpeg to multiple resolutions.
+Consumers: Transcode workers polling 'transcode-queue'.
+Logic:
+  1. Download original video from MinIO
+  2. Run ffmpeg to transcode to target resolution
+  3. Upload encoded video to MinIO 'encoded' bucket
+  4. Cleanup temp files
 """
 import os
 import subprocess
@@ -10,32 +17,38 @@ from temporalio import activity
 from shared.storage import MinIOStorage
 
 
-@activity.defn
-async def transcode_to_720p(metadata: dict) -> dict:
+# Resolution configurations: height -> (scale_filter, name)
+RESOLUTION_CONFIG = {
+    320: {"scale": "scale=-2:320", "name": "320p", "target": "568x320"},
+    480: {"scale": "scale=-2:480", "name": "480p", "target": "854x480"},
+    720: {"scale": "scale=-2:720", "name": "720p", "target": "1280x720"},
+    1080: {"scale": "scale=-2:1080", "name": "1080p", "target": "1920x1080"},
+}
+
+
+async def _transcode_to_resolution(metadata: dict, target_height: int) -> dict:
     """
-    Transcode video to 720p resolution using ffmpeg
+    Generic transcode function for any resolution.
     
     Args:
-        metadata: Metadata dictionary from extract_metadata activity
-                  Must contain 'video_id', 'width', 'height'
-    
+        metadata: Metadata dict with 'video_id', 'width', 'height'
+        target_height: Target resolution height (320, 480, 720, 1080)
+        
     Returns:
-        Dictionary with transcoding results:
-        {
-            "video_id": str,
-            "original_resolution": "1920x1080",
-            "target_resolution": "1280x720",
-            "encoded_video_id": str,  # Object name in 'encoded' bucket
-            "success": bool,
-            "output_file_size": int    # Size in bytes
-        }
+        Dictionary with transcoding results
+        
+    Raises:
+        RuntimeError: If transcoding fails
     """
     video_id = metadata.get("video_id")
     original_width = metadata.get("width")
     original_height = metadata.get("height")
     
+    config = RESOLUTION_CONFIG[target_height]
+    resolution_name = config["name"]
+    
     activity.logger.info(
-        f"Starting 720p transcode for video {video_id} "
+        f"[{video_id}] Starting {resolution_name} transcode "
         f"(original: {original_width}x{original_height})"
     )
     
@@ -45,7 +58,7 @@ async def transcode_to_720p(metadata: dict) -> dict:
     
     try:
         # Step 1: Download original video from MinIO
-        activity.logger.info(f"Downloading original video {video_id}")
+        activity.logger.info(f"[{video_id}] Downloading original video")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_in:
             temp_input_path = tmp_in.name
         
@@ -59,30 +72,28 @@ async def transcode_to_720p(metadata: dict) -> dict:
             raise RuntimeError(f"Failed to download video {video_id} from MinIO")
         
         # Step 2: Prepare output file
-        with tempfile.NamedTemporaryFile(delete=False, suffix="_720p.mp4") as tmp_out:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{resolution_name}.mp4") as tmp_out:
             temp_output_path = tmp_out.name
         
-        # Step 3: Build ffmpeg command for 720p transcoding
+        # Step 3: Build ffmpeg command
         cmd = [
             "ffmpeg",
-            "-i", temp_input_path,           # Input file
-            "-vf", "scale=-2:720",            # Scale to 720p height, auto-calculate width
-                                              # -2 ensures width is divisible by 2
-            "-c:v", "libx264",                # Video codec: H.264
-            "-preset", "medium",              # Encoding speed (medium = balanced)
-            "-crf", "23",                     # Quality (18=visually lossless, 23=default, 28=lower quality)
-            "-c:a", "aac",                    # Audio codec: AAC
-            "-b:a", "128k",                   # Audio bitrate: 128 kbps
-            "-movflags", "+faststart",        # Optimize for web streaming
-            "-progress", "pipe:1",            # Send progress to stdout
-            "-y",                             # Overwrite output file
+            "-i", temp_input_path,
+            "-vf", config["scale"],
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-progress", "pipe:1",
+            "-y",
             temp_output_path
         ]
         
-        activity.logger.info(f"Running ffmpeg transcode: {' '.join(cmd)}")
+        activity.logger.info(f"[{video_id}] Running ffmpeg for {resolution_name}")
         
-        # Step 4: Execute ffmpeg with streaming output (avoid OOM on large files)
-        # Use Popen to stream stderr line by line instead of capturing all in memory
+        # Step 4: Execute ffmpeg
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -90,30 +101,25 @@ async def transcode_to_720p(metadata: dict) -> dict:
             text=True
         )
         
-        # Stream progress lines and log periodically
         progress_lines = []
         for line in process.stderr:
             if line.startswith('frame=') or line.startswith('time='):
                 progress_lines.append(line.strip())
-                # Log every 100 lines to avoid flooding logs
                 if len(progress_lines) % 100 == 0:
-                    activity.logger.info(f"Progress: {progress_lines[-1]}")
+                    activity.logger.info(f"[{video_id}] {resolution_name} progress: {progress_lines[-1]}")
         
-        process.wait(timeout=600)  # 10 minutes timeout
+        process.wait(timeout=600)
         
         if process.returncode != 0:
-            # Read stderr for error message
-            stderr_output = '\n'.join(progress_lines[-20:])  # Last 20 lines
-            raise RuntimeError(f"ffmpeg failed: {stderr_output}")
+            stderr_output = '\n'.join(progress_lines[-20:])
+            raise RuntimeError(f"ffmpeg failed for {resolution_name}: {stderr_output}")
         
-        # Log final progress
-        if progress_lines:
-            activity.logger.info(f"ffmpeg complete: {progress_lines[-1]}")
+        activity.logger.info(f"[{video_id}] ffmpeg {resolution_name} complete")
         
-        # Step 5: Upload transcoded video to 'encoded' bucket with .mp4 extension
-        encoded_video_id = f"{video_id}_720p.mp4"
+        # Step 5: Upload transcoded video
+        encoded_video_id = f"{video_id}_{resolution_name}.mp4"
         
-        activity.logger.info(f"Uploading transcoded video to encoded/{encoded_video_id}")
+        activity.logger.info(f"[{video_id}] Uploading {resolution_name} to encoded/{encoded_video_id}")
         upload_success = storage.upload_file(
             file_path=temp_output_path,
             bucket_name="encoded",
@@ -121,17 +127,18 @@ async def transcode_to_720p(metadata: dict) -> dict:
         )
         
         if not upload_success:
-            raise RuntimeError(f"Failed to upload transcoded video to MinIO")
+            raise RuntimeError(f"Failed to upload {resolution_name} video to MinIO")
         
-        # Step 6: Get output file size
+        # Step 6: Calculate stats
         output_size = os.path.getsize(temp_output_path)
         input_size = os.path.getsize(temp_input_path)
         compression_ratio = (1 - output_size / input_size) * 100
         
         result_data = {
             "video_id": video_id,
+            "resolution": resolution_name,
             "original_resolution": f"{original_width}x{original_height}",
-            "target_resolution": "1280x720",
+            "target_resolution": config["target"],
             "encoded_video_id": encoded_video_id,
             "success": True,
             "input_file_size": input_size,
@@ -140,28 +147,46 @@ async def transcode_to_720p(metadata: dict) -> dict:
         }
         
         activity.logger.info(
-            f"Successfully transcoded {video_id}: "
-            f"{input_size / (1024*1024):.1f}MB → {output_size / (1024*1024):.1f}MB "
-            f"({compression_ratio:.1f}% reduction)"
+            f"[{video_id}] {resolution_name} complete: "
+            f"{input_size / (1024*1024):.1f}MB -> {output_size / (1024*1024):.1f}MB "
+            f"({compression_ratio:.1f}% change)"
         )
         
         return result_data
-    
-    except RuntimeError as e:
-        activity.logger.error(f"Runtime error: {e}")
-        raise
+        
     except subprocess.TimeoutExpired:
-        activity.logger.error(f"ffmpeg timeout for video {video_id}")
-        raise RuntimeError("ffmpeg execution timed out (>10 minutes)")
+        activity.logger.error(f"[{video_id}] ffmpeg timeout for {resolution_name}")
+        raise RuntimeError(f"ffmpeg execution timed out for {resolution_name}")
     except Exception as e:
-        activity.logger.error(f"Error transcoding {video_id}: {e}")
+        activity.logger.error(f"[{video_id}] Error transcoding to {resolution_name}: {e}")
         raise
     finally:
-        # Step 7: Cleanup temporary files
+        # Cleanup
         if temp_input_path and Path(temp_input_path).exists():
             Path(temp_input_path).unlink()
-            activity.logger.info(f"Cleaned up input: {temp_input_path}")
-        
         if temp_output_path and Path(temp_output_path).exists():
             Path(temp_output_path).unlink()
-            activity.logger.info(f"Cleaned up output: {temp_output_path}")
+
+
+@activity.defn
+async def transcode_to_320p(metadata: dict) -> dict:
+    """Transcode video to 320p resolution."""
+    return await _transcode_to_resolution(metadata, 320)
+
+
+@activity.defn
+async def transcode_to_480p(metadata: dict) -> dict:
+    """Transcode video to 480p resolution."""
+    return await _transcode_to_resolution(metadata, 480)
+
+
+@activity.defn
+async def transcode_to_720p(metadata: dict) -> dict:
+    """Transcode video to 720p resolution."""
+    return await _transcode_to_resolution(metadata, 720)
+
+
+@activity.defn
+async def transcode_to_1080p(metadata: dict) -> dict:
+    """Transcode video to 1080p resolution."""
+    return await _transcode_to_resolution(metadata, 1080)
