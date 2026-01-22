@@ -1,2 +1,5 @@
+# ignore any __pycache__ directory anywhere
+__pycache__/
+# legacy patterns (kept for compatibility)
 */__pycache__/
 */__pycache__/*

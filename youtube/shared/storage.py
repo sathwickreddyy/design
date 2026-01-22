@@ -4,6 +4,8 @@ import os
 import uuid
 import logging
 from datetime import datetime
+from io import BytesIO
+
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -45,6 +47,35 @@ class MinIOStorage:
         # Auto-create required buckets on initialization
         if auto_create_buckets:
             self.ensure_buckets()
+    
+    def file_exists(self, bucket_name: str, object_name: str) -> bool:
+        """Check if a file exists in the bucket"""
+        try:
+            self.s3_client.head_object(Bucket=bucket_name, Key=object_name)
+            return True
+        except ClientError:
+            return False
+    
+    def upload_fileobj(self, file_data: bytes, bucket_name: str, object_name: str) -> bool:
+        """
+        Upload file data (bytes) directly to MinIO without saving to disk
+        
+        Args:
+            file_data: File content as bytes
+            bucket_name: Name of the bucket
+            object_name: Name of the object in bucket
+            
+        Returns:
+            True if upload successful, False otherwise
+        """
+        try:
+            file_obj = BytesIO(file_data)
+            self.s3_client.upload_fileobj(file_obj, bucket_name, object_name)
+            logger.info(f"File data uploaded to '{bucket_name}/{object_name}'")
+            return True
+        except ClientError as e:
+            logger.error(f"Error uploading file data: {e}")
+            return False
     
     def ensure_buckets(self, buckets: list = None) -> None:
         """

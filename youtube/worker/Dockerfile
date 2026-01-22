@@ -14,4 +14,4 @@ COPY worker/ ./worker/
 COPY shared/ ./shared/
 
 # Run the workflow worker entrypoint inside the worker package
-CMD ["python", "-m", "worker.run_worker"]
+CMD ["python", "-m", "worker.run_metadata_worker"]
