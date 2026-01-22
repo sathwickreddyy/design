@@ -51,7 +51,7 @@ async def transcode_to_720p(metadata: dict) -> dict:
         
         success = storage.download_file(
             bucket_name="videos",
-            object_name=video_id,
+            object_name=f"{video_id}.mp4",
             file_path=temp_input_path
         )
         
@@ -110,8 +110,8 @@ async def transcode_to_720p(metadata: dict) -> dict:
         if progress_lines:
             activity.logger.info(f"ffmpeg complete: {progress_lines[-1]}")
         
-        # Step 5: Upload transcoded video to 'encoded' bucket
-        encoded_video_id = f"{video_id}_720p"
+        # Step 5: Upload transcoded video to 'encoded' bucket with .mp4 extension
+        encoded_video_id = f"{video_id}_720p.mp4"
         
         activity.logger.info(f"Uploading transcoded video to encoded/{encoded_video_id}")
         upload_success = storage.upload_file(

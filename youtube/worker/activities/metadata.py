@@ -34,7 +34,7 @@ async def extract_metadata(video_id: str) -> dict:
         
         success = storage.download_file(
             bucket_name="videos",
-            object_name=video_id,
+            object_name=f"{video_id}.mp4",
             file_path=temp_video_path
         )
         

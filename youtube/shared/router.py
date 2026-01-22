@@ -79,11 +79,11 @@ async def upload_video(file: UploadFile = File(...)):
         
         logger.info(f"File size: {len(file_content)} bytes")
         
-        # Upload to MinIO
+        # Upload to MinIO with .mp4 extension
         storage.upload_fileobj(
             file_data=file_content,
             bucket_name="videos",
-            object_name=video_id
+            object_name=f"{video_id}.mp4"
         )
 
         logger.info(f"Video file uploaded to MinIO with video_id: {video_id}")
@@ -190,11 +190,11 @@ async def upload_youtube_video(request: YouTubeUrlRequest):
             
             logger.info(f"File size: {len(file_content)} bytes")
         
-        # Upload to MinIO
+        # Upload to MinIO with .mp4 extension
         storage.upload_fileobj(
             file_data=file_content,
             bucket_name="videos",
-            object_name=video_id
+            object_name=f"{video_id}.mp4"
         )
 
         logger.info(f"Video uploaded to MinIO with video_id: {video_id}")
@@ -314,7 +314,7 @@ async def download_video(video_id: str, resolution: str = "720p"):
         )
     
     try:
-        object_name = f"{video_id}_{resolution}"
+        object_name = f"{video_id}_{resolution}.mp4"
         
         # Check if file exists
         if not storage.file_exists("encoded", object_name):
