@@ -1,7 +1,9 @@
 import os
 import uuid
 import logging
+import httpx
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from pydantic import BaseModel, HttpUrl
 from temporalio.client import Client
 from shared.storage import MinIOStorage
 from shared.workflows import VideoWorkflow
@@ -24,6 +26,10 @@ async def get_temporal_client():
         temporal_address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
         temporal_client = await Client.connect(temporal_address)
     return temporal_client
+class VideoUrlRequest(BaseModel):
+    url: HttpUrl
+
+
 
 
 @router.post("/upload")
@@ -73,6 +79,74 @@ async def upload_video(file: UploadFile = File(...)):
         }
         
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload-url")
+async def upload_video_from_url(request: VideoUrlRequest):
+    """
+    Download a video from URL and trigger the transcoding workflow
+    
+    Args:
+        url: HTTP/HTTPS URL of the video file
+        
+    Returns:
+        - video_id: Unique identifier for the video
+        - workflow_id: Temporal workflow ID
+        - status: "processing"
+    """
+    logger.info(f"Upload from URL request received: {request.url}")
+    try:
+        # Generate unique video ID
+        video_id = "video_" + str(uuid.uuid4())[:8]
+        logger.info(f"Generated video_id: {video_id}")
+        
+        # Download video from URL
+        logger.info(f"Downloading video from URL: {request.url}")
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.get(str(request.url))
+            response.raise_for_status()
+            file_content = response.content
+            
+        logger.info(f"Downloaded {len(file_content)} bytes")
+        
+        # Upload to MinIO
+        storage.upload_fileobj(
+            file_data=file_content,
+            bucket_name="videos",
+            object_name=video_id
+        )
+
+        logger.info(f"Video file uploaded to MinIO with video_id: {video_id}")
+        logger.info("Starting Temporal workflow for video processing...")
+        
+        # Start Temporal workflow
+        client = await get_temporal_client()
+        workflow_handle = await client.start_workflow(
+            VideoWorkflow.run,
+            video_id,
+            id=f"video-workflow-{video_id}",
+            task_queue="video-tasks"
+        )
+
+        logger.info(f"Workflow started with ID: {workflow_handle.id}")
+        
+        return {
+            "video_id": video_id,
+            "workflow_id": workflow_handle.id,
+            "status": "processing",
+            "source_url": str(request.url),
+            "message": f"Video downloaded from URL and processing started."
+        }
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error downloading video: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to download video: {e.response.status_code}")
+    except httpx.RequestError as e:
+        logger.error(f"Request error downloading video: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to download video: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -1,5 +1,7 @@
 from datetime import timedelta
 from temporalio import workflow
+from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 # Import activity type for type-hinting (but don't import implementation)
 with workflow.unsafe.imports_passed_through():
@@ -19,28 +21,59 @@ class VideoWorkflow:
             video_id: Unique identifier for the video in MinIO
             
         Returns:
-            Dictionary with final transcoding results
+            Dictionary with final transcoding results or error details
         """
-        # Step 1: Extract metadata on dedicated metadata queue
-        # Picked up by lightweight, fast metadata workers
-        metadata = await workflow.execute_activity(
-            extract_metadata,
-            video_id,
-            start_to_close_timeout=timedelta(seconds=60),
-            task_queue="metadata-queue",  # Fan out to metadata workers
+        # Retry policy: max 5 attempts with exponential backoff
+        retry_policy = RetryPolicy(
+            initial_interval=timedelta(seconds=1),
+            backoff_coefficient=2.0,
+            maximum_interval=timedelta(seconds=30),
+            maximum_attempts=5,
         )
         
-        workflow.logger.info(f"Metadata extracted: {metadata.get('width')}x{metadata.get('height')}")
+        try:
+            # Step 1: Extract metadata on dedicated metadata queue
+            # Picked up by lightweight, fast metadata workers
+            metadata = await workflow.execute_activity(
+                extract_metadata,
+                video_id,
+                start_to_close_timeout=timedelta(seconds=60),
+                task_queue="metadata-queue",  # Fan out to metadata workers
+                retry_policy=retry_policy,
+            )
+            
+            workflow.logger.info(f"Metadata extracted: {metadata.get('width')}x{metadata.get('height')}")
+            
+        except ActivityError as e:
+            workflow.logger.error(f"Failed to extract metadata after {retry_policy.maximum_attempts} attempts: {e}")
+            return {
+                "success": False,
+                "video_id": video_id,
+                "error": "metadata_extraction_failed",
+                "message": f"Failed to extract metadata after maximum retries: {str(e.cause)}",
+            }
         
-        # Step 2: Transcode on dedicated transcode queue
-        # Picked up by CPU-heavy transcode workers
-        transcode_result = await workflow.execute_activity(
-            transcode_to_720p,
-            metadata,
-            start_to_close_timeout=timedelta(minutes=15),
-            task_queue="transcode-queue",  # Fan out to transcode workers
-        )
-        
-        workflow.logger.info(f"Transcode complete: {transcode_result.get('encoded_video_id')}")
-        
-        return transcode_result
+        try:
+            # Step 2: Transcode on dedicated transcode queue
+            # Picked up by CPU-heavy transcode workers
+            transcode_result = await workflow.execute_activity(
+                transcode_to_720p,
+                metadata,
+                start_to_close_timeout=timedelta(minutes=15),
+                task_queue="transcode-queue",  # Fan out to transcode workers
+                retry_policy=retry_policy,
+            )
+            
+            workflow.logger.info(f"Transcode complete: {transcode_result.get('encoded_video_id')}")
+            
+            return transcode_result
+            
+        except ActivityError as e:
+            workflow.logger.error(f"Failed to transcode after {retry_policy.maximum_attempts} attempts: {e}")
+            return {
+                "success": False,
+                "video_id": video_id,
+                "metadata": metadata,
+                "error": "transcoding_failed",
+                "message": f"Failed to transcode after maximum retries: {str(e.cause)}",
+            }
