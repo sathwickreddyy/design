@@ -10,6 +10,7 @@ Logic:
   4. Execute all transcodes in parallel
   5. Return aggregated results
 """
+import asyncio
 from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -190,18 +191,24 @@ class VideoWorkflow:
         transcode_results = []
         transcode_errors = []
         
-        # Await all tasks (they run in parallel)
-        for resolution, task in transcode_tasks:
-            try:
-                result = await task
-                transcode_results.append(result)
-                workflow.logger.info(f"[{video_id}] {resolution} transcode complete")
-            except ActivityError as e:
-                workflow.logger.error(f"[{video_id}] {resolution} transcode failed: {e}")
+        # Await ALL tasks together (true parallelism)
+        completed_tasks = await asyncio.gather(
+            *[task for _, task in transcode_tasks],
+            return_exceptions=True
+        )
+        
+        # Process results
+        for i, (resolution, _) in enumerate(transcode_tasks):
+            result = completed_tasks[i]
+            if isinstance(result, ActivityError):
+                workflow.logger.error(f"[{video_id}] {resolution} transcode failed: {result}")
                 transcode_errors.append({
                     "resolution": resolution,
-                    "error": str(e.cause),
+                    "error": str(result.cause),
                 })
+            else:
+                transcode_results.append(result)
+                workflow.logger.info(f"[{video_id}] {resolution} transcode complete")
         
         workflow.logger.info(
             f"[{video_id}] Transcoding complete: "
