@@ -95,7 +95,6 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    container_name: youtube-metadata-worker
     depends_on:
       - temporal
       - minio
@@ -106,13 +105,14 @@ services:
       - MINIO_SECRET_KEY=password123
       - WORKER_TYPE=metadata
     command: ["python", "-m", "worker.run_metadata_worker"]
+    deploy:
+      replicas: 1
 
   # Transcode Worker
   transcode-worker:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    container_name: youtube-transcode-worker
     depends_on:
       - temporal
       - minio
@@ -123,6 +123,8 @@ services:
       - MINIO_SECRET_KEY=password123
       - WORKER_TYPE=transcode
     command: ["python", "-m", "worker.run_transcode_worker"]
+    deploy:
+      replicas: 2
 
 volumes:
   postgres_data:
