@@ -88,11 +88,11 @@ async def upload_video(file: UploadFile = File(...)):
 
         logger.info(f"Video file uploaded to MinIO with video_id: {video_id}")
         
-        # Start Temporal workflow
+        # Start Temporal workflow (no YouTube URL, file already uploaded)
         client = await get_temporal_client()
         workflow_handle = await client.start_workflow(
             VideoWorkflow.run,
-            video_id,
+            args=[video_id, None],  # None for youtube_url since file is already in MinIO
             id=f"video-workflow-{video_id}",
             task_queue="video-tasks"
         )
@@ -116,7 +116,7 @@ async def upload_video(file: UploadFile = File(...)):
 @router.post("/upload-youtube-url")
 async def upload_youtube_video(request: YouTubeUrlRequest):
     """
-    Download a video from YouTube and trigger the transcoding workflow.
+    Queue a YouTube video for download and processing.
     
     Args:
         url: YouTube URL (youtube.com/watch?v=xxx or youtu.be/xxx)
@@ -124,12 +124,9 @@ async def upload_youtube_video(request: YouTubeUrlRequest):
     Returns:
         - video_id: Unique identifier for the video
         - workflow_id: Temporal workflow ID
-        - status: "processing"
-        - title: YouTube video title
-        - duration_seconds: Video duration
+        - status: "queued" (download will happen asynchronously)
+        - message: Status message
     """
-    import yt_dlp
-    
     url = str(request.url).strip()
     logger.info(f"YouTube upload request received: {url}")
     
@@ -146,90 +143,31 @@ async def upload_youtube_video(request: YouTubeUrlRequest):
     try:
         # Generate unique video ID
         video_id = "video_" + str(uuid.uuid4())[:8]
-        logger.info(f"Generated video_id: {video_id}")
+        logger.info(f"Generated video_id: {video_id} for URL: {url}")
         
-        # Create temp directory for download
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = os.path.join(temp_dir, f"{video_id}.mp4")
-            
-            # yt-dlp options - download best quality up to 1080p
-            ydl_opts = {
-                'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
-                'outtmpl': output_path,
-                'merge_output_format': 'mp4',
-                'quiet': True,
-                'no_warnings': True,
-            }
-            
-            logger.info(f"Downloading YouTube video: {url}")
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Extract info and download
-                info = ydl.extract_info(url, download=True)
-                video_title = info.get('title', 'Unknown')
-                duration = info.get('duration', 0)
-                
-            logger.info(f"Downloaded: {video_title} ({duration}s)")
-            
-            # Verify file exists
-            if not os.path.exists(output_path):
-                raise HTTPException(
-                    status_code=500, 
-                    detail="Failed to download video - file not found"
-                )
-            
-            # Read downloaded file
-            with open(output_path, 'rb') as f:
-                file_content = f.read()
-            
-            if len(file_content) == 0:
-                raise HTTPException(
-                    status_code=500, 
-                    detail="Downloaded file is empty"
-                )
-            
-            logger.info(f"File size: {len(file_content)} bytes")
-        
-        # Upload to MinIO with .mp4 extension
-        storage.upload_fileobj(
-            file_data=file_content,
-            bucket_name="videos",
-            object_name=f"{video_id}.mp4"
-        )
-
-        logger.info(f"Video uploaded to MinIO with video_id: {video_id}")
-        
-        # Start Temporal workflow
+        # Start Temporal workflow with YouTube URL
+        # Download will happen asynchronously in download worker
         client = await get_temporal_client()
         workflow_handle = await client.start_workflow(
             VideoWorkflow.run,
-            video_id,
+            args=[video_id, url],  # Pass youtube_url as second argument
             id=f"video-workflow-{video_id}",
-            task_queue="video-tasks"
+            task_queue="video-tasks",
         )
-
-        logger.info(f"Workflow started with ID: {workflow_handle.id}")
+        
+        logger.info(f"Workflow queued with ID: {workflow_handle.id}")
         
         return {
             "video_id": video_id,
             "workflow_id": workflow_handle.id,
-            "status": "processing",
-            "source_url": url,
-            "title": video_title,
-            "duration_seconds": duration,
-            "message": f"YouTube video '{video_title}' downloaded and processing started."
+            "status": "queued",
+            "message": "YouTube video queued for download and processing",
         }
         
-    except yt_dlp.utils.DownloadError as e:
-        logger.error(f"yt-dlp download error: {e}")
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Failed to download YouTube video: {str(e)}"
-        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Error queuing YouTube video: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -90,6 +90,24 @@ services:
       - WORKER_TYPE=workflow
     command: ["python", "-m", "worker.run_worker"]
 
+  # Download Worker (YouTube downloads with rate limiting)
+  download-worker:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    depends_on:
+      - temporal
+      - minio
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - WORKER_TYPE=download
+    command: ["python", "-m", "worker.run_download_worker"]
+    deploy:
+      replicas: 2
+
   # Metadata Worker
   metadata-worker:
     build:

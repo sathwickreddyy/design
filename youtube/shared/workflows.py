@@ -5,6 +5,7 @@ from temporalio.exceptions import ActivityError
 
 # Import activity type for type-hinting (but don't import implementation)
 with workflow.unsafe.imports_passed_through():
+    from worker.activities.download import download_youtube_video
     from worker.activities.metadata import extract_metadata
     from worker.activities.transcode import transcode_to_720p
 
@@ -12,13 +13,14 @@ with workflow.unsafe.imports_passed_through():
 @workflow.defn
 class VideoWorkflow:
     @workflow.run
-    async def run(self, video_id: str) -> dict:
+    async def run(self, video_id: str, youtube_url: str = None) -> dict:
         """
-        Video processing workflow: Extract metadata → Transcode to 720p
+        Video processing workflow: Download (if YouTube) → Extract metadata → Transcode to 720p
         Uses specialized task queues for each activity type
         
         Args:
             video_id: Unique identifier for the video in MinIO
+            youtube_url: Optional YouTube URL for download (if None, assumes video already in MinIO)
             
         Returns:
             Dictionary with final transcoding results or error details
@@ -31,8 +33,29 @@ class VideoWorkflow:
             maximum_attempts=5,
         )
         
+        # Step 1: Download from YouTube if URL provided
+        if youtube_url:
+            try:
+                workflow.logger.info(f"Starting YouTube download for {video_id}")
+                download_result = await workflow.execute_activity(
+                    download_youtube_video,
+                    args=[video_id, youtube_url],
+                    start_to_close_timeout=timedelta(minutes=5),
+                    task_queue="download-queue",  # Fan out to download workers
+                    retry_policy=retry_policy,
+                )
+                workflow.logger.info(f"Download complete: {download_result.get('title')} ({download_result.get('file_size_bytes', 0) / 1024 / 1024:.2f} MB)")
+            except ActivityError as e:
+                workflow.logger.error(f"Failed to download YouTube video after {retry_policy.maximum_attempts} attempts: {e}")
+                return {
+                    "success": False,
+                    "video_id": video_id,
+                    "error": "download_failed",
+                    "message": f"Failed to download YouTube video after maximum retries: {str(e.cause)}",
+                }
+        
         try:
-            # Step 1: Extract metadata on dedicated metadata queue
+            # Step 2: Extract metadata on dedicated metadata queue
             # Picked up by lightweight, fast metadata workers
             metadata = await workflow.execute_activity(
                 extract_metadata,
