@@ -3,12 +3,60 @@ from botocore.exceptions import ClientError
 import os
 import uuid
 import logging
+import json
 from datetime import datetime
 from io import BytesIO
 
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+
+# Storage path constants for consistent structure
+class StoragePaths:
+    """
+    Centralized storage path definitions.
+    
+    Structure:
+        videos/{video_id}/
+            source/source.mp4
+            chunks/source/chunk_0000.mp4, ...
+            manifests/source.json
+            outputs/{resolution}/
+                segments/seg_0000.mp4, ...
+        encoded/
+            {video_id}_{resolution}.mp4  (final outputs)
+    """
+    
+    @staticmethod
+    def source_video(video_id: str) -> str:
+        """Path to original uploaded video."""
+        return f"{video_id}/source/source.mp4"
+    
+    @staticmethod
+    def source_chunk(video_id: str, chunk_index: int) -> str:
+        """Path to a source chunk."""
+        return f"{video_id}/chunks/source/chunk_{chunk_index:04d}.mp4"
+    
+    @staticmethod
+    def source_manifest(video_id: str) -> str:
+        """Path to source chunks manifest."""
+        return f"{video_id}/manifests/source.json"
+    
+    @staticmethod
+    def output_segment(video_id: str, resolution: str, segment_index: int) -> str:
+        """Path to a transcoded segment."""
+        return f"{video_id}/outputs/{resolution}/segments/seg_{segment_index:04d}.mp4"
+    
+    @staticmethod
+    def output_manifest(video_id: str, resolution: str) -> str:
+        """Path to output manifest for a resolution."""
+        return f"{video_id}/outputs/{resolution}/manifest.json"
+    
+    @staticmethod
+    def final_video(video_id: str, resolution: str) -> str:
+        """Path to final merged video (in encoded bucket)."""
+        return f"{video_id}_{resolution}.mp4"
 
 
 class MinIOStorage:

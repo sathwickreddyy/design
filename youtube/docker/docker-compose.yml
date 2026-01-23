@@ -126,8 +126,27 @@ services:
     deploy:
       replicas: 1
 
-  # Transcode Worker
-  transcode-worker:
+  # Split Worker (video chunking)
+  split-worker:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    depends_on:
+      - temporal
+      - minio
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - WORKER_TYPE=split
+      - CHUNK_DURATION_SECONDS=4
+    command: ["python", "-m", "worker.run_chunked_worker"]
+    deploy:
+      replicas: 1
+
+  # Chunk Transcode Worker (parallel chunk processing)
+  chunk-transcode-worker:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
@@ -140,7 +159,25 @@ services:
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=password123
       - WORKER_TYPE=transcode
-    command: ["python", "-m", "worker.run_transcode_worker"]
+    command: ["python", "-m", "worker.run_chunked_worker"]
+    deploy:
+      replicas: 4  # Scale for parallelism
+
+  # Merge Worker (segment assembly)
+  merge-worker:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    depends_on:
+      - temporal
+      - minio
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - WORKER_TYPE=merge
+    command: ["python", "-m", "worker.run_chunked_worker"]
     deploy:
       replicas: 2
 
