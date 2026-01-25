@@ -406,10 +406,17 @@ async def generate_hls_playlist(
             f"#EXT-X-TARGETDURATION:{int(segment_duration) + 1}",
             "#EXT-X-MEDIA-SEQUENCE:0",
             "#EXT-X-PLAYLIST-TYPE:VOD",
+            "#EXT-X-ALLOW-CACHE:YES",
         ]
         
-        # Add each segment with relative path
+        # Add each segment with discontinuity tags
+        # Each transcoded chunk has independent timestamps, so we mark discontinuities
         for idx in range(chunk_count):
+            # Add discontinuity tag for each segment after the first
+            # This tells players to expect timestamp resets
+            if idx > 0:
+                playlist_lines.append("#EXT-X-DISCONTINUITY")
+            
             segment_filename = f"segments/seg_{idx:04d}.ts"
             playlist_lines.append(f"#EXTINF:{segment_duration:.3f},")
             playlist_lines.append(segment_filename)
