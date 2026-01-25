@@ -9,9 +9,8 @@ Logic:
   3. Determine target resolutions (only downscale)
   4. Split video into chunks at GOP boundaries
   5. Transcode all chunks × resolutions in parallel
-  6. Merge chunks per resolution into final videos
-  7. Cleanup source chunks
-  8. Return aggregated results
+    6. Merge chunks per resolution into final videos
+    7. Return aggregated results
 """
 import asyncio
 from datetime import timedelta
@@ -27,7 +26,6 @@ with workflow.unsafe.imports_passed_through():
         split_video,
         transcode_chunk,
         merge_segments,
-        cleanup_source_chunks,
     )
 
 
@@ -311,19 +309,6 @@ class VideoWorkflow:
             else:
                 transcoded.append(result)
                 workflow.logger.info(f"[{video_id}] Merge {task_info['resolution']} complete")
-        
-        # Step 7: Cleanup source chunks (best effort, don't fail workflow)
-        try:
-            workflow.logger.info(f"[{video_id}] Cleaning up source chunks")
-            await workflow.execute_activity(
-                cleanup_source_chunks,
-                args=[video_id, chunk_count],
-                start_to_close_timeout=timedelta(minutes=5),
-                task_queue="split-queue",
-                retry_policy=RetryPolicy(maximum_attempts=2),
-            )
-        except ActivityError as e:
-            workflow.logger.warning(f"[{video_id}] Cleanup failed (non-critical): {e}")
         
         workflow.logger.info(
             f"[{video_id}] Workflow complete: "
