@@ -180,3 +180,73 @@ docker-compose up -d
 2. **Failure Isolation**: Worker crash loses only one chunk; others continue.
 3. **Faster Recovery**: Requeue only the failed chunk; no wasted work.
 4. **Streaming-Ready**: Output is already chunked for HLS/DASH.
+
+---
+
+## 🏗️ System Design Evaluation (Load & Concurrency)
+
+This architecture uses the **Competing Consumers Pattern** to decouple traffic spikes from processing capacity.
+
+### 1. Robustness Under Load (The "Flood" Scenario)
+If 1,000 users upload videos simultaneously:
+*   **System State**: The API accepts all requests instantly (async) and creates 1,000 Workflow Executions in Temporal.
+*   **Input Queue**: 1,000 tasks pile up in the `download-queue` or `split-queue`.
+*   **Processing**: The Workers (`split-worker`, `transcode-worker`) pull tasks at their maximum capable rate (e.g., 4 concurrent tasks if there are 4 workers).
+*   **Outcome**: The system **does not crash**. It simply processes the backlog at a constant rate. Throughput remains stable; latency per job increases linearly with queue depth.
+
+### 2. Concurrency Control
+*   **Temporal Queues**: Act as infinite buffers.
+*   **Worker Polling**: Workers only request a new task when they finish the current one. This implements automatic **Backpressure**.
+*   **Isolation**: A crash in one transcoding worker retries only that specific chunk (small unit of work), not the whole video.
+
+### 3. Bottlenecks & Scaling
+*   **CPU**: Transcoding is CPU-bound. Scale `chunk-transcode-worker` replicas to increase throughput.
+*   **Network/IO**: Verify MinIO/S3 bandwidth when hundreds of workers download chunks simultaneously.
+*   **Database**: Temporal's DB handles the state transitions. For extreme scale (>10k workflows/sec), this needs tuning.
+
+---
+
+## ☁️ AWS Deployment Guide
+
+To move this system from Docker Compose to a production-grade AWS solution:
+
+### 1. Orchestration (Temporal)
+*   **Option A (Managed):** Use **Temporal Cloud**. Simplest, zero maintenance. Point workers to the cloud namespace.
+*   **Option B (Self-Hosted):** deploy Temporal Cluster on **Amazon EKS** (Kubernetes) or a fleet of EC2 instances. Requires:
+    *   **RDS (PostgreSQL/MySQL)** or **Cassandra** for persistence.
+    *   **Amazon OpenSearch** for visibility (advanced search).
+
+### 2. Compute (Workers)
+*   **Service**: **Amazon ECS (Fargate)** or **EKS**.
+*   **Strategy**: Deploy workers as containers.
+    *   `split-worker`: High Memory instances (RAM for buffering large files).
+    *   `transcode-worker`: **Compute Optimized (c6g/c7g)** instances. Spot Instances save 90% cost here since tasks are idempotent and retriable.
+    *   `merge-worker`: General purpose or Memory optimized (merging involves IO).
+*   **Auto-Scaling**: Configure **KEDA** (Kubernetes) or AWS Auto Scaling to scale worker count based on Temporal Queue Depth.
+
+### 3. Storage
+*   **Service**: **Amazon S3**.
+*   **Migration**: Replace MinIO connection details with AWS IAM Roles (IRSA) and S3 bucket endpoints.
+*   **Lifecycle**: Use S3 Lifecycle Policies to auto-delete `chunks/` after 24 hours to save costs.
+
+### 4. API Layer
+*   **Service**: **AWS App Runner** or **ECS Fargate** behind an **Application Load Balancer (ALB)**.
+*   **Security**: WAF for protection, Cognito for user auth.
+
+### 5. Deployment Diagram
+```mermaid
+graph TD
+    User -->|State/Status| API[AWS App Runner (FastAPI)]
+    User -->|Video Upload| S3[Amazon S3 Bucket]
+    
+    API -->|Start Workflow| T[Temporal Cloud]
+    
+    subgraph "Auto-Scaling Worker Fleet (ECS/EKS)"
+        W1[Split Workers] 
+        W2[Transcode Workers (Spot Instances)]
+        W3[Merge Workers]
+    end
+    
+    T -->|Dispatch Tasks| W1 & W2 & W3
+    W1 & W2 & W3 -->|Read/Write| S3
+```
