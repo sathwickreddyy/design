@@ -40,7 +40,7 @@ async def run_split_worker():
     
     Split is fast (uses copy codec), so one worker handles both split and cleanup.
     """
-    temporal_host = os.getenv("TEMPORAL_HOST", "localhost:7233")
+    temporal_host = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     logger.info(f"Connecting to Temporal at {temporal_host}")
     
     client = await Client.connect(temporal_host)
@@ -61,7 +61,7 @@ async def run_transcode_chunk_worker():
     
     This is CPU-heavy; run multiple instances for parallelism.
     """
-    temporal_host = os.getenv("TEMPORAL_HOST", "localhost:7233")
+    temporal_host = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     logger.info(f"Connecting to Temporal at {temporal_host}")
     
     client = await Client.connect(temporal_host)
@@ -82,7 +82,7 @@ async def run_merge_worker():
     
     Merge is I/O-heavy (downloads + uploads) but uses copy codec.
     """
-    temporal_host = os.getenv("TEMPORAL_HOST", "localhost:7233")
+    temporal_host = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     logger.info(f"Connecting to Temporal at {temporal_host}")
     
     client = await Client.connect(temporal_host)
@@ -126,7 +126,7 @@ async def run_all_workers():
     
     In production, use separate workers for each queue for better scaling.
     """
-    temporal_host = os.getenv("TEMPORAL_HOST", "localhost:7233")
+    temporal_host = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     logger.info(f"Connecting to Temporal at {temporal_host}")
     
     client = await Client.connect(temporal_host)

@@ -140,7 +140,6 @@ services:
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=password123
       - WORKER_TYPE=split
-      - CHUNK_DURATION_SECONDS=4
     command: ["python", "-m", "worker.run_chunked_worker"]
     deploy:
       replicas: 1

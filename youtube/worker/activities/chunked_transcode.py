@@ -26,8 +26,7 @@ RESOLUTION_CONFIG = {
 }
 
 # Default chunk duration in seconds (4s is common for HLS/DASH)
-# Configurable via CHUNK_DURATION_SECONDS environment variable
-DEFAULT_CHUNK_DURATION = int(os.getenv("CHUNK_DURATION_SECONDS", "4"))
+DEFAULT_CHUNK_DURATION = 4
 
 
 @activity.defn
