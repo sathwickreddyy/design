@@ -1,0 +1,43 @@
+version: '3.8'
+
+networks:
+  observability-net:
+    name: observability-net
+    external: true
+
+services:
+  splunk:
+    image: splunk/splunk:9.0
+    platform: linux/amd64
+    container_name: splunk
+    environment:
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=password123
+      - SPLUNK_HEC_TOKEN=00000000-0000-0000-0000-000000000000
+      - SPLUNK_USER=root
+    ports:
+      - "18000:8000"
+      - "8088:8088"
+    networks:
+      - observability-net
+    volumes:
+      # Persist Splunk data
+      - splunk-data:/opt/splunk/var
+      - splunk-etc:/opt/splunk/etc
+      
+      # Mount Docker logs (Note: This works on macOS Docker Desktop if the VM handles it correctly, 
+      # which your previous ELK setup confirmed)
+      - /var/lib/docker/containers:/host_docker_logs:ro
+      
+      # Mount our custom config
+      # We mount them to a specific app "search" so they get picked up
+      - ./inputs.conf:/opt/splunk/etc/apps/search/local/inputs.conf
+      - ./props.conf:/opt/splunk/etc/apps/search/local/props.conf
+    
+    # Run as root to read the mapped docker logs
+    user: root
+
+volumes:
+  splunk-data:
+  splunk-etc:
