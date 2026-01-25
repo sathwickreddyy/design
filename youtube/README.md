@@ -25,29 +25,50 @@
 
 ---
 
-## 📂 Storage Structure
+## 📂 Storage Structure (HLS Streaming)
 
-Single bucket (`videos`) with prefixes:
+Single bucket (`videos`) with prefixes for streaming-ready output:
 ```
 videos/
   {video_id}/
-    source/source.mp4           # Original uploaded video
-    chunks/source/              # GOP-aligned source chunks
-      chunk_0000.mp4
-      chunk_0001.mp4
-      ...
-    manifests/
-      source.json               # Chunk manifest (ordering)
-    outputs/
-      720p/segments/            # Transcoded chunks per resolution
-        seg_0000.mp4
-        seg_0001.mp4
-      480p/segments/
+    source/
+      source.mp4              # Original uploaded video
+      chunks/                 # GOP-aligned source chunks
+        chunk_0000.mp4
+        chunk_0001.mp4
         ...
+      manifest.json           # Chunk manifest (ordering)
+    outputs/
+      master.m3u8             # 🎯 Master playlist (start here!)
+      720p/
+        playlist.m3u8         # Variant playlist for 720p
+        segments/
+          seg_0000.ts         # HLS segment (MPEG-TS format)
+          seg_0001.ts
+          ...
+      480p/
+        playlist.m3u8
+        segments/
+          seg_*.ts
+      320p/
+        playlist.m3u8
+        segments/
+          seg_*.ts
+```
 
-encoded/                        # Final merged outputs
-  {video_id}_720p.mp4
-  {video_id}_480p.mp4
+### 🎬 How to Play HLS Streams
+
+```bash
+# Get the master playlist URL
+MINIO_URL="http://localhost:9000/videos/{video_id}/outputs/master.m3u8"
+
+# Play with VLC
+vlc "$MINIO_URL"
+
+# Play with ffplay  
+ffplay "$MINIO_URL"
+
+# In web browser: use hls.js or video.js library
 ```
 
 ---
@@ -72,24 +93,22 @@ flowchart TD
         F --> I[chunk_N]
         
         subgraph Parallel["Parallel Transcode (chunks × resolutions)"]
-            G --> G720[720p] & G480[480p] & G320[320p]
-            H --> H720[720p] & H480[480p] & H320[320p]
-            I --> I720[720p] & I480[480p] & I320[320p]
+            G --> G720[720p .ts] & G480[480p .ts] & G320[320p .ts]
+            H --> H720[720p .ts] & H480[480p .ts] & H320[320p .ts]
+            I --> I720[720p .ts] & I480[480p .ts] & I320[320p .ts]
         end
         
-        G720 & H720 & I720 --> M720[🔗 Merge 720p]
-        G480 & H480 & I480 --> M480[🔗 Merge 480p]
-        G320 & H320 & I320 --> M320[🔗 Merge 320p]
+        G720 & H720 & I720 --> P720[📝 playlist.m3u8]
+        G480 & H480 & I480 --> P480[📝 playlist.m3u8]
+        G320 & H320 & I320 --> P320[📝 playlist.m3u8]
         
-        M720 --> O[📦 Final Videos]
-        M480 --> O
-        M320 --> O
+        P720 & P480 & P320 --> M[📋 master.m3u8]
         
-        O --> CL[🗑️ Cleanup Chunks]
+        M --> CL[🗑️ Cleanup Chunks]
     end
 
-    subgraph Output
-        CL --> Z[✅ Complete]
+    subgraph Output["HLS Streaming Ready"]
+        CL --> Z[✅ Adaptive Bitrate Stream]
     end
 ```
 
@@ -105,7 +124,7 @@ sequenceDiagram
     participant MW as Metadata Worker
     participant SW as Split Worker
     participant TW as Transcode Workers (x4)
-    participant MGW as Merge Worker
+    participant PW as Playlist Worker
     participant S3 as MinIO
 
     API->>T: Start VideoWorkflow(video_id, url)
@@ -129,22 +148,25 @@ sequenceDiagram
         T->>TW: transcode_chunk(1, 720p)
         T->>TW: transcode_chunk(1, 480p)
         Note over TW: ... N chunks × M resolutions
-        TW->>S3: Upload seg_XXXX.mp4
+        TW->>S3: Upload seg_XXXX.ts (HLS segment)
         TW-->>T: ✓ chunk complete
     end
     
-    par Merge per Resolution
-        T->>MGW: merge_segments(720p)
-        T->>MGW: merge_segments(480p)
-        MGW->>S3: Download segments (ordered)
-        MGW->>S3: Upload final video
-        MGW-->>T: ✓ merged
+    par Generate HLS Playlists
+        T->>PW: generate_hls_playlist(720p)
+        T->>PW: generate_hls_playlist(480p)
+        PW->>S3: Upload playlist.m3u8
+        PW-->>T: ✓ playlist ready
     end
+    
+    T->>PW: generate_master_playlist
+    PW->>S3: Upload master.m3u8
+    PW-->>T: ✓ master ready
     
     T->>SW: cleanup_source_chunks
     SW->>S3: Delete chunks
     
-    T-->>API: ✅ Workflow Complete
+    T-->>API: ✅ HLS Stream Ready
 ```
 
 ---
@@ -158,8 +180,8 @@ sequenceDiagram
 | `download-worker` | download-queue | 2 | YouTube downloads |
 | `metadata-worker` | metadata-queue | 1 | FFprobe metadata |
 | `split-worker` | split-queue | 1 | Video chunking |
-| `chunk-transcode-worker` | transcode-queue | 4 | Parallel chunk transcoding |
-| `merge-worker` | merge-queue | 2 | Segment assembly |
+| `chunk-transcode-worker` | transcode-queue | 4 | Parallel chunk transcoding (.ts) |
+| `playlist-worker` | playlist-queue | 1 | HLS playlist generation |
 
 ---
 
@@ -209,12 +231,15 @@ docker-compose up -d
 
 ---
 
-## 💡 Why Chunks/GOPs?
+## 💡 Why Chunks/GOPs + HLS?
 
 1. **Parallelism**: Split a 2-hour video into 1800 chunks (4s each); workers process in parallel.
 2. **Failure Isolation**: Worker crash loses only one chunk; others continue.
 3. **Faster Recovery**: Requeue only the failed chunk; no wasted work.
-4. **Streaming-Ready**: Output is already chunked for HLS/DASH.
+4. **Instant Streaming**: No merge step required! Generate a text playlist and stream immediately.
+5. **Adaptive Bitrate**: Players seamlessly switch between qualities based on network.
+6. **CDN-Friendly**: Small 4MB chunks cache efficiently on CDN edge nodes globally.
+7. **Cost Efficient**: Users only download what they watch (no full file transfer).
 
 ---
 

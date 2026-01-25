@@ -2,41 +2,63 @@
 
 ## 🎯 Overview
 
-Two-step video processing workflow:
+Multi-step video processing workflow with HLS streaming output:
 1. **Extract Metadata** → Get video specs (resolution, duration, codecs)
-2. **Transcode to 720p** → Convert to web-friendly format
+2. **Split Video** → GOP-aligned chunks for parallel processing
+3. **Transcode Chunks** → Convert each chunk to multiple resolutions (.ts)
+4. **Generate Playlists** → Create HLS m3u8 files for adaptive streaming
 
 ## 📁 File Structure
 
 ```
 worker/
-├── activities.py                    # Metadata extraction (fast)
-├── transcode_activities.py          # Video transcoding (slow)
-├── run_worker.py                    # Combined worker (both activities)
-└── run_transcode_worker.py          # Dedicated transcode worker
+├── activities/
+│   ├── download.py              # YouTube download activity
+│   ├── metadata.py              # Metadata extraction (fast)
+│   └── chunked_transcode.py     # Split, transcode, HLS playlist
+├── run_worker.py                # Combined worker
+└── run_chunked_worker.py        # Dedicated transcode worker
 
 shared/
-├── workflows.py                     # Workflow definition (chains activities)
-└── storage.py                       # MinIO operations
+├── workflows.py                 # Workflow definition (HLS output)
+└── storage.py                   # MinIO operations + HLS paths
 
 docs/
-└── VIDEO_SCALING_EXPLAINED.md       # Deep dive into scaling algorithms
+├── VIDEO_SCALING_EXPLAINED.md   # Deep dive into scaling algorithms
+└── TRANSCODING_ARCHITECTURE.md  # This file
 ```
 
 ## 🔄 How It Works
 
-### Workflow Chain
+### Workflow Chain (HLS Output)
 ```
-┌─────────────┐       ┌──────────────┐       ┌─────────────┐
-│ Upload      │       │ Extract      │       │ Transcode   │
-│ Video       │   →   │ Metadata     │   →   │ to 720p     │
-│ (raw)       │       │ (5-10 sec)   │       │ (1-30 min)  │
-└─────────────┘       └──────────────┘       └─────────────┘
-     │                      │                       │
-     ▼                      ▼                       ▼
-videos/video_id      {width: 1920,         encoded/video_id_720p
-                      height: 1080,
-                      codec: h264...}
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│ Upload      │     │ Extract      │     │ Split       │
+│ Video       │  →  │ Metadata     │  →  │ into Chunks │
+│ (raw)       │     │ (5-10 sec)   │     │ (instant)   │
+└─────────────┘     └──────────────┘     └─────────────┘
+     │                    │                    │
+     ▼                    ▼                    ▼
+source.mp4        {width: 1920,         chunk_0.mp4
+                   height: 1080,        chunk_1.mp4
+                   codec: h264...}      chunk_N.mp4
+                                              │
+                                              ▼
+┌────────────────────────────────────────────────────────────┐
+│           Parallel Transcode (N chunks × M resolutions)        │
+│  chunk_0 → [720p.ts, 480p.ts, 320p.ts]                         │
+│  chunk_1 → [720p.ts, 480p.ts, 320p.ts]                         │
+│  chunk_N → [720p.ts, 480p.ts, 320p.ts]                         │
+└────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────┐
+│                Generate HLS Playlists (instant)                │
+│  720p/playlist.m3u8 → references seg_0000.ts ... seg_N.ts     │
+│  480p/playlist.m3u8 → references seg_0000.ts ... seg_N.ts     │
+│  320p/playlist.m3u8 → references seg_0000.ts ... seg_N.ts     │
+│  master.m3u8        → lists all quality levels                 │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
@@ -53,14 +75,30 @@ metadata = {
     "codec": "h264"
 }
 
-# Step 2: Transcode (uses metadata from step 1)
+# Step 2: Split into chunks
+split_result = {
+    "chunk_count": 32,
+    "chunks": [{"index": 0, "key": "..."}, ...]
+}
+
+# Step 3: Parallel transcode (generates .ts segments)
+# 32 chunks × 3 resolutions = 96 parallel tasks!
+
+# Step 4: Generate HLS playlists (instant - just text files)
 result = {
+    "success": True,
     "video_id": "20260121_143022_a1b2c3d4",
-    "encoded_video_id": "20260121_143022_a1b2c3d4_720p",
-    "original_resolution": "1920x1080",
-    "target_resolution": "1280x720",
-    "output_file_size": 62914560,
-    "compression_ratio": "58.3%"
+    "metadata": metadata,
+    "source_resolution": "1920x1080",
+    "chunk_count": 32,
+    "hls": {
+        "master_playlist": "{video_id}/outputs/master.m3u8",
+        "variants": [
+            {"resolution": "720p", "playlist": "...", "bandwidth": 2800000},
+            {"resolution": "480p", "playlist": "...", "bandwidth": 1400000},
+            {"resolution": "320p", "playlist": "...", "bandwidth": 800000},
+        ]
+    }
 }
 ```
 
@@ -265,18 +303,31 @@ RAM per worker: ~500 MB
 
 ---
 
-## 🎯 Next Steps
+## 🎯 What's Implemented
 
-1. **Add more resolutions:**
-   - Copy `transcode_to_720p` → `transcode_to_480p`, `transcode_to_1080p`
-   - Run in parallel (3 activities from same metadata)
+✅ **Multiple resolutions:** 720p, 480p, 320p (auto-selected based on source)  
+✅ **Parallel chunked transcoding:** N chunks × M resolutions  
+✅ **HLS Adaptive Bitrate (ABR):**  
+   - MPEG-TS segments (.ts) for each chunk  
+   - Variant playlists per resolution  
+   - Master playlist with bandwidth hints  
+   - Players automatically switch quality based on network  
 
-2. **Add thumbnail extraction:**
+## 🚀 Next Steps (Enhancements)
+
+1. **Add thumbnail extraction:**
    ```bash
    ffmpeg -i input.mp4 -ss 00:00:05 -vframes 1 thumbnail.jpg
    ```
 
-3. **Implement adaptive bitrate (ABR):**
-   - Generate multiple qualities (1080p, 720p, 480p, 360p)
-   - Create HLS playlist (m3u8)
-   - Let player choose based on bandwidth
+2. **Add CDN integration:**
+   - Connect MinIO/S3 bucket to CloudFront or Cloudflare
+   - Set proper CORS headers for cross-origin playback
+
+3. **Add audio normalization:**
+   - Separate audio processing step for loudness normalization
+   - EBU R128 or ATSC A/85 standards
+
+4. **Add DASH support:**
+   - Generate MPD manifests alongside HLS
+   - fMP4 segments for better compression

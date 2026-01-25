@@ -1,12 +1,12 @@
 """
-Chunked transcoding activities for large video processing.
+Chunked transcoding activities for large video processing with HLS output.
 
-Purpose: Split videos into chunks, transcode in parallel, and merge results.
-Consumers: Workers polling 'split-queue', 'transcode-queue', 'merge-queue'.
+Purpose: Split videos into chunks, transcode in parallel, and generate HLS playlists.
+Consumers: Workers polling 'split-queue', 'transcode-queue', 'playlist-queue'.
 Logic:
   - split_video: Split source into GOP-aligned chunks + manifest
-  - transcode_chunk: Transcode a single chunk to target resolution
-  - merge_segments: Combine transcoded chunks into final video
+  - transcode_chunk: Transcode a single chunk to HLS-compatible .ts segment
+  - generate_hls_playlist: Create m3u8 playlists for adaptive streaming
 """
 import os
 import json
@@ -243,8 +243,8 @@ async def transcode_chunk(
         if not success:
             raise RuntimeError(f"Failed to download chunk {source_chunk_key}")
         
-        # Step 2: Transcode chunk
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{resolution}.mp4") as tmp_out:
+        # Step 2: Transcode chunk to HLS-compatible MPEG-TS format
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{resolution}.ts") as tmp_out:
             temp_output_path = tmp_out.name
         
         cmd = [
@@ -256,7 +256,7 @@ async def transcode_chunk(
             "-crf", "23",
             "-c:a", "aac",
             "-b:a", "128k",
-            "-movflags", "+faststart",
+            "-f", "mpegts",  # Output as MPEG-TS for HLS compatibility
             "-y",
             temp_output_path
         ]
@@ -318,135 +318,220 @@ async def transcode_chunk(
             Path(temp_output_path).unlink()
 
 
+# HLS Configuration: Bandwidth estimates for adaptive bitrate selection
+HLS_BANDWIDTH = {
+    "320p": 800000,    # 800 Kbps
+    "480p": 1400000,   # 1.4 Mbps
+    "720p": 2800000,   # 2.8 Mbps
+    "1080p": 5000000,  # 5 Mbps
+}
+
+# Default segment duration (should match split_video chunk_duration)
+HLS_SEGMENT_DURATION = 4
+
+
 @activity.defn
-async def merge_segments(video_id: str, resolution: str, chunk_count: int) -> dict:
+async def generate_hls_playlist(
+    video_id: str,
+    resolution: str,
+    chunk_count: int,
+    segment_duration: float = HLS_SEGMENT_DURATION
+) -> dict:
     """
-    Merge transcoded chunks into final video for a resolution.
+    Generate HLS variant playlist (.m3u8) for a resolution.
     
-    Purpose: Combine parallel-processed chunks into playable video.
+    Purpose: Create streaming-ready playlist referencing transcoded segments.
     Consumers: Workflow orchestrator after all chunks are transcoded.
+    
+    Benefits over merge_segments:
+      - No re-encoding or file merging required (instant)
+      - Streaming-ready output for immediate playback
+      - Enables adaptive bitrate switching
+      - Reduced storage (no duplicate merged files)
+    
     Logic:
-      1. Download all encoded segments from MinIO (in order)
-      2. Create concat file for ffmpeg
-      3. Use ffmpeg concat demuxer to merge
-      4. Upload final video to encoded bucket
-      5. Cleanup temp files
+      1. Verify all segments exist in MinIO
+      2. Generate m3u8 playlist content
+      3. Upload playlist to MinIO
     
     Args:
         video_id: Unique identifier for the video
         resolution: Target resolution (e.g., "720p")
-        chunk_count: Number of chunks to merge
+        chunk_count: Number of segments in the playlist
+        segment_duration: Duration of each segment in seconds
         
     Returns:
         Dictionary with:
         - video_id: str
         - resolution: str
-        - output_key: str (path to final video)
+        - playlist_key: str (path to .m3u8 in MinIO)
+        - segment_count: int
         - success: bool
     """
     activity.logger.info(
-        f"[{video_id}] Merging {chunk_count} segments for {resolution}"
+        f"[{video_id}] Generating HLS playlist for {resolution} ({chunk_count} segments)"
     )
     
     storage = MinIOStorage()
-    temp_dir = None
     
     try:
-        temp_dir = tempfile.mkdtemp(prefix=f"merge_{video_id}_{resolution}_")
-        
-        # Step 1: Download all segments in order
-        segment_paths = []
+        # Step 1: Verify all segments exist
+        missing_segments = []
+        segment_keys = []
         
         for idx in range(chunk_count):
             segment_key = StoragePaths.output_segment(video_id, resolution, idx)
-            local_path = os.path.join(temp_dir, f"seg_{idx:04d}.mp4")
+            segment_keys.append(segment_key)
             
-            success = storage.download_file(
-                bucket_name="videos",
-                object_name=segment_key,
-                file_path=local_path
+            if not storage.file_exists("videos", segment_key):
+                missing_segments.append(idx)
+        
+        if missing_segments:
+            raise RuntimeError(
+                f"Missing segments for {resolution}: {missing_segments[:10]}" +
+                (f"... and {len(missing_segments) - 10} more" if len(missing_segments) > 10 else "")
             )
-            
-            if not success:
-                raise RuntimeError(f"Failed to download segment {idx} for {resolution}")
-            
-            segment_paths.append(local_path)
         
-        activity.logger.info(f"[{video_id}] Downloaded {len(segment_paths)} segments")
+        activity.logger.info(f"[{video_id}] Verified {chunk_count} segments exist")
         
-        # Step 2: Create concat file
-        concat_file = os.path.join(temp_dir, "concat.txt")
-        with open(concat_file, 'w') as f:
-            for path in segment_paths:
-                # ffmpeg concat requires escaped paths
-                escaped_path = path.replace("'", "'\\''")
-                f.write(f"file '{escaped_path}'\n")
-        
-        # Step 3: Merge using ffmpeg concat demuxer
-        output_path = os.path.join(temp_dir, f"{video_id}_{resolution}.mp4")
-        
-        cmd = [
-            "ffmpeg",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_file,
-            "-c", "copy",
-            "-movflags", "+faststart",
-            "-y",
-            output_path
+        # Step 2: Generate m3u8 playlist content
+        # HLS playlist format (version 3 for broad compatibility)
+        playlist_lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:3",
+            f"#EXT-X-TARGETDURATION:{int(segment_duration) + 1}",
+            "#EXT-X-MEDIA-SEQUENCE:0",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
         ]
         
-        activity.logger.info(f"[{video_id}] Running ffmpeg merge for {resolution}")
+        # Add each segment with relative path
+        for idx in range(chunk_count):
+            segment_filename = f"segments/seg_{idx:04d}.ts"
+            playlist_lines.append(f"#EXTINF:{segment_duration:.3f},")
+            playlist_lines.append(segment_filename)
         
-        process = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
+        # End of playlist marker (required for VOD)
+        playlist_lines.append("#EXT-X-ENDLIST")
         
-        if process.returncode != 0:
-            activity.logger.error(f"[{video_id}] ffmpeg merge failed: {process.stderr[-300:]}")
-            raise RuntimeError(f"ffmpeg merge failed for {resolution}")
+        playlist_content = "\n".join(playlist_lines)
         
-        # Step 4: Upload final video
-        final_key = StoragePaths.final_video(video_id, resolution)
+        # Step 3: Upload variant playlist
+        playlist_key = StoragePaths.variant_playlist(video_id, resolution)
         
-        upload_success = storage.upload_file(
-            file_path=output_path,
+        upload_success = storage.upload_fileobj(
+            file_data=playlist_content.encode('utf-8'),
             bucket_name="videos",
-            object_name=final_key
+            object_name=playlist_key
         )
         
         if not upload_success:
-            raise RuntimeError(f"Failed to upload final {resolution} video")
-        
-        output_size = os.path.getsize(output_path)
+            raise RuntimeError(f"Failed to upload playlist for {resolution}")
         
         activity.logger.info(
-            f"[{video_id}] Merge complete for {resolution}: "
-            f"{output_size / (1024*1024):.2f} MB -> videos/{final_key}"
+            f"[{video_id}] HLS playlist generated for {resolution}: "
+            f"videos/{playlist_key} ({chunk_count} segments)"
         )
         
         return {
             "video_id": video_id,
             "resolution": resolution,
-            "output_key": final_key,
-            "output_size_bytes": output_size,
+            "playlist_key": playlist_key,
+            "segment_count": chunk_count,
+            "bandwidth": HLS_BANDWIDTH.get(resolution, 1000000),
             "success": True
         }
         
-    except subprocess.TimeoutExpired:
-        activity.logger.error(f"[{video_id}] ffmpeg merge timeout for {resolution}")
-        raise RuntimeError(f"ffmpeg merge timed out for {resolution}")
     except Exception as e:
-        activity.logger.error(f"[{video_id}] Merge failed for {resolution}: {e}")
+        activity.logger.error(f"[{video_id}] Playlist generation failed for {resolution}: {e}")
         raise
-    finally:
-        # Cleanup temp directory
-        if temp_dir and Path(temp_dir).exists():
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@activity.defn
+async def generate_master_playlist(
+    video_id: str,
+    variants: list[dict]
+) -> dict:
+    """
+    Generate HLS master playlist for adaptive bitrate streaming.
+    
+    Purpose: Create the "menu" that video players use to select quality.
+    Consumers: Workflow orchestrator after all variant playlists are created.
+    
+    The master playlist lists all available quality levels with their
+    bandwidth requirements, allowing players to adaptively switch based
+    on network conditions.
+    
+    Args:
+        video_id: Unique identifier for the video
+        variants: List of variant info dicts with resolution, bandwidth, playlist_key
+        
+    Returns:
+        Dictionary with:
+        - video_id: str
+        - master_playlist_key: str
+        - variant_count: int
+        - success: bool
+    """
+    activity.logger.info(
+        f"[{video_id}] Generating master playlist for {len(variants)} variants"
+    )
+    
+    storage = MinIOStorage()
+    
+    try:
+        # Build master playlist content
+        # Sort variants by bandwidth (highest first for better initial quality)
+        sorted_variants = sorted(variants, key=lambda v: v.get("bandwidth", 0), reverse=True)
+        
+        playlist_lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:3",
+        ]
+        
+        for variant in sorted_variants:
+            resolution = variant["resolution"]
+            bandwidth = variant.get("bandwidth", HLS_BANDWIDTH.get(resolution, 1000000))
+            height = RESOLUTION_CONFIG.get(resolution, {}).get("height", 720)
+            
+            # Calculate approximate width (16:9 aspect ratio)
+            width = int(height * 16 / 9)
+            
+            # EXT-X-STREAM-INF describes each variant
+            playlist_lines.append(
+                f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={width}x{height},NAME=\"{resolution}\""
+            )
+            # Relative path to variant playlist
+            playlist_lines.append(f"{resolution}/playlist.m3u8")
+        
+        playlist_content = "\n".join(playlist_lines)
+        
+        # Upload master playlist
+        master_key = StoragePaths.master_playlist(video_id)
+        
+        upload_success = storage.upload_fileobj(
+            file_data=playlist_content.encode('utf-8'),
+            bucket_name="videos",
+            object_name=master_key
+        )
+        
+        if not upload_success:
+            raise RuntimeError("Failed to upload master playlist")
+        
+        activity.logger.info(
+            f"[{video_id}] Master playlist generated: videos/{master_key}"
+        )
+        
+        return {
+            "video_id": video_id,
+            "master_playlist_key": master_key,
+            "variant_count": len(variants),
+            "variants": [v["resolution"] for v in sorted_variants],
+            "success": True
+        }
+        
+    except Exception as e:
+        activity.logger.error(f"[{video_id}] Master playlist generation failed: {e}")
+        raise
 
 
 @activity.defn

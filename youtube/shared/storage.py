@@ -50,8 +50,8 @@ class StoragePaths:
     
     @staticmethod
     def output_segment(video_id: str, resolution: str, segment_index: int) -> str:
-        """Path to a transcoded segment."""
-        return f"{video_id}/outputs/{resolution}/segments/seg_{segment_index:04d}.mp4"
+        """Path to a transcoded HLS segment (.ts for streaming)."""
+        return f"{video_id}/outputs/{resolution}/segments/seg_{segment_index:04d}.ts"
     
     @staticmethod
     def output_manifest(video_id: str, resolution: str) -> str:
@@ -59,8 +59,18 @@ class StoragePaths:
         return f"{video_id}/outputs/{resolution}/manifest.json"
     
     @staticmethod
+    def variant_playlist(video_id: str, resolution: str) -> str:
+        """Path to HLS variant playlist for a specific resolution."""
+        return f"{video_id}/outputs/{resolution}/playlist.m3u8"
+    
+    @staticmethod
+    def master_playlist(video_id: str) -> str:
+        """Path to HLS master playlist (adaptive bitrate index)."""
+        return f"{video_id}/outputs/master.m3u8"
+    
+    @staticmethod
     def final_video(video_id: str, resolution: str) -> str:
-        """Path to final merged video (same bucket, under outputs)."""
+        """Path to final merged video (same bucket, under outputs). DEPRECATED: Use HLS playlists instead."""
         return f"{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4"
 
 

@@ -8,9 +8,9 @@ Logic:
   2. Extract metadata
   3. Determine target resolutions (only downscale)
   4. Split video into chunks at GOP boundaries
-  5. Transcode all chunks × resolutions in parallel
-    6. Merge chunks per resolution into final videos
-    7. Return aggregated results
+  5. Transcode all chunks × resolutions in parallel (to HLS .ts segments)
+  6. Generate HLS playlists (variant + master) for adaptive streaming
+  7. Return aggregated results with streaming URLs
 """
 import asyncio
 from datetime import timedelta
@@ -25,7 +25,8 @@ with workflow.unsafe.imports_passed_through():
     from worker.activities.chunked_transcode import (
         split_video,
         transcode_chunk,
-        merge_segments,
+        generate_hls_playlist,
+        generate_master_playlist,
     )
 
 
@@ -69,17 +70,18 @@ class VideoWorkflow:
     Video processing workflow with parallel chunk-based multi-resolution transcoding.
     
     Pipeline:
-        Download → Metadata → Split → Parallel Transcode Chunks → Merge
+        Download → Metadata → Split → Parallel Transcode Chunks → Generate HLS Playlists
     
-    Storage Flow:
+    Storage Flow (HLS Streaming Output):
         videos/{video_id}/source/source.mp4                        # Input
             ↓
         videos/{video_id}/source/chunks/chunk_*.mp4                # Split output
         videos/{video_id}/source/manifest.json                     # Ordering metadata
             ↓
-        videos/{video_id}/outputs/{res}/segments/seg_*.mp4         # Transcoded chunks
+        videos/{video_id}/outputs/{res}/segments/seg_*.ts          # HLS segments
+        videos/{video_id}/outputs/{res}/playlist.m3u8              # Variant playlist
             ↓
-        videos/{video_id}/outputs/{res}/{video_id}_{res}.mp4      # Final merged videos
+        videos/{video_id}/outputs/master.m3u8                      # Master playlist (ABR)
     
     Smart features:
         - Only downscales (never upscales)
@@ -87,6 +89,7 @@ class VideoWorkflow:
         - Failure isolation: only failed chunks retry
         - Deterministic ordering via manifest
         - Retry policy with exponential backoff
+        - HLS output for adaptive bitrate streaming
     """
     
     @workflow.run
@@ -101,7 +104,7 @@ class VideoWorkflow:
             Expected MinIO State (if no youtube_url):
                 videos/{video_id}/source/source.mp4   → Source video exists
         
-        OUTPUT (MinIO):
+        OUTPUT (MinIO - HLS Streaming Structure):
             videos/{video_id}/
                 source/
                     source.mp4          → Original video
@@ -109,15 +112,16 @@ class VideoWorkflow:
                         chunk_0000.mp4, chunk_0001.mp4, ... chunk_N.mp4
                     manifest.json       → {"chunk_count": N, "chunks": [...]}
                 outputs/
+                    master.m3u8         → Master playlist (adaptive bitrate index)
                     720p/
-                        segments/       → seg_0000.mp4 ... seg_N.mp4
-                        {video_id}_720p.mp4     → Final merged 720p video
+                        playlist.m3u8   → Variant playlist for 720p
+                        segments/       → seg_0000.ts ... seg_N.ts
                     480p/
-                        segments/       → seg_0000.mp4 ... seg_N.mp4
-                        {video_id}_480p.mp4     → Final merged 480p video
+                        playlist.m3u8   → Variant playlist for 480p
+                        segments/       → seg_0000.ts ... seg_N.ts
                     320p/
-                        segments/       → seg_0000.mp4 ... seg_N.mp4
-                        {video_id}_320p.mp4     → Final merged 320p video
+                        playlist.m3u8   → Variant playlist for 320p  
+                        segments/       → seg_0000.ts ... seg_N.ts
         
         OUTPUT (Return):
             {
@@ -126,15 +130,13 @@ class VideoWorkflow:
                 "metadata": {"width": int, "height": int, "duration": float, ...},
                 "source_resolution": "1920x1080",
                 "chunk_count": int,
-                "transcoded": [
-                    {
-                        "video_id": str,
-                        "resolution": "720p",
-                        "output_key": "{video_id}_720p.mp4",
-                        "output_size_bytes": int
-                    },
-                    ...
-                ],
+                "hls": {
+                    "master_playlist": "{video_id}/outputs/master.m3u8",
+                    "variants": [
+                        {"resolution": "720p", "playlist": "...", "bandwidth": 2800000},
+                        ...
+                    ]
+                },
                 "errors": [...] or None
             }
         
@@ -168,22 +170,29 @@ class VideoWorkflow:
            Source: videos/{video_id}/source/chunks/chunk_NNNN.mp4
            Action: • Downloads source chunk
                    • Transcodes to target resolution using ffmpeg
-                   • Applies: scale filter, h264 encoder, aac audio
-                   • Uploads to videos/{video_id}/outputs/{res}/segments/seg_NNNN.mp4
-           Output: videos/{video_id}/outputs/{resolution}/segments/seg_NNNN.mp4
+                   • Outputs MPEG-TS format (.ts) for HLS compatibility
+                   • Uploads to videos/{video_id}/outputs/{res}/segments/seg_NNNN.ts
+           Output: videos/{video_id}/outputs/{resolution}/segments/seg_NNNN.ts
                    Returns: {"chunk_index": N, "resolution": "720p", "output_key": ...}
            
            Example: 10 chunks × 3 resolutions = 30 parallel tasks
         
-        5. merge_segments (per resolution)
+        5. generate_hls_playlist (per resolution)
            Input:  video_id, resolution, chunk_count
-           Source: videos/{video_id}/outputs/{resolution}/segments/seg_0000..N.mp4
-           Action: • Downloads all segments in order (0..N)
-                   • Creates ffmpeg concat file
-                   • Merges using ffmpeg -f concat -c copy (no re-encoding)
-                   • Uploads to videos/{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4
-           Output: videos/{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4
-                   Returns: {"resolution": "720p", "output_key": ..., "output_size_bytes": ...}
+           Source: videos/{video_id}/outputs/{resolution}/segments/seg_0000..N.ts
+           Action: • Verifies all segments exist
+                   • Generates .m3u8 playlist referencing segments
+                   • Uploads to videos/{video_id}/outputs/{resolution}/playlist.m3u8
+           Output: videos/{video_id}/outputs/{resolution}/playlist.m3u8
+                   Returns: {"resolution": "720p", "playlist_key": ..., "bandwidth": ...}
+        
+        6. generate_master_playlist
+           Input:  video_id, variants (list of resolution info)
+           Action: • Creates master.m3u8 listing all quality levels
+                   • Includes bandwidth hints for adaptive streaming
+                   • Uploads to videos/{video_id}/outputs/master.m3u8
+           Output: videos/{video_id}/outputs/master.m3u8
+                   Returns: {"master_playlist_key": ..., "variant_count": N}
         
         FAILURE HANDLING:
             • Each activity retries up to 5 times with exponential backoff
@@ -196,7 +205,7 @@ class VideoWorkflow:
             youtube_url: Optional YouTube URL (if None, assumes video already in MinIO)
             
         Returns:
-            Dictionary with success status, metadata, and transcoded video information
+            Dictionary with success status, metadata, and HLS streaming information
         """
         # Retry policy: max 5 attempts with exponential backoff
         retry_policy = RetryPolicy(
@@ -373,57 +382,89 @@ class VideoWorkflow:
                 f"Incomplete: {incomplete_resolutions}"
             )
         
-        # Step 6: Merge chunks for each resolution
-        merge_tasks = []
+        # Step 6: Generate HLS playlists for each resolution (replaces merge_segments)
+        # This is instant since we just create text files referencing existing segments
+        playlist_tasks = []
         
         for resolution in target_resolutions:
             task = workflow.execute_activity(
-                merge_segments,
+                generate_hls_playlist,
                 args=[video_id, resolution, chunk_count],
-                start_to_close_timeout=timedelta(minutes=10),
-                task_queue="merge-queue",
+                start_to_close_timeout=timedelta(seconds=60),
+                task_queue="playlist-queue",
                 retry_policy=retry_policy,
             )
-            merge_tasks.append({"task": task, "resolution": resolution})
+            playlist_tasks.append({"task": task, "resolution": resolution})
         
-        workflow.logger.info(f"[{video_id}] Starting {len(merge_tasks)} merge tasks")
+        workflow.logger.info(f"[{video_id}] Starting {len(playlist_tasks)} playlist generation tasks")
         
-        merge_results = await asyncio.gather(
-            *[t["task"] for t in merge_tasks],
+        playlist_results = await asyncio.gather(
+            *[t["task"] for t in playlist_tasks],
             return_exceptions=True
         )
         
-        # Process merge results
-        transcoded = []
-        merge_errors = []
+        # Process playlist results
+        variants = []
+        playlist_errors = []
         
-        for i, task_info in enumerate(merge_tasks):
-            result = merge_results[i]
+        for i, task_info in enumerate(playlist_tasks):
+            result = playlist_results[i]
             if isinstance(result, Exception):
                 workflow.logger.error(
-                    f"[{video_id}] Merge {task_info['resolution']} failed: {result}"
+                    f"[{video_id}] Playlist {task_info['resolution']} failed: {result}"
                 )
-                merge_errors.append({
+                playlist_errors.append({
                     "resolution": task_info["resolution"],
                     "error": str(result),
                 })
             else:
-                transcoded.append(result)
-                workflow.logger.info(f"[{video_id}] Merge {task_info['resolution']} complete")
+                variants.append(result)
+                workflow.logger.info(f"[{video_id}] Playlist {task_info['resolution']} complete")
+        
+        # Step 7: Generate master playlist if we have any successful variants
+        master_result = None
+        if variants:
+            try:
+                workflow.logger.info(f"[{video_id}] Generating master playlist")
+                master_result = await workflow.execute_activity(
+                    generate_master_playlist,
+                    args=[video_id, variants],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    task_queue="playlist-queue",
+                    retry_policy=retry_policy,
+                )
+                workflow.logger.info(f"[{video_id}] Master playlist complete")
+            except ActivityError as e:
+                workflow.logger.error(f"[{video_id}] Master playlist failed: {e}")
+                playlist_errors.append({
+                    "resolution": "master",
+                    "error": str(e.cause),
+                })
         
         workflow.logger.info(
             f"[{video_id}] Workflow complete: "
-            f"{len(transcoded)} resolutions, {chunk_count} chunks processed"
+            f"{len(variants)} resolutions, {chunk_count} chunks processed"
         )
         
-        # Return aggregated results
-        all_errors = transcode_errors + merge_errors
+        # Return aggregated results with HLS info
+        all_errors = transcode_errors + playlist_errors
         return {
-            "success": len(merge_errors) == 0 and len(transcoded) > 0,
+            "success": len(playlist_errors) == 0 and len(variants) > 0,
             "video_id": video_id,
             "metadata": metadata,
             "source_resolution": f"{source_width}x{source_height}",
             "chunk_count": chunk_count,
-            "transcoded": transcoded,
+            "hls": {
+                "master_playlist": master_result.get("master_playlist_key") if master_result else None,
+                "variants": [
+                    {
+                        "resolution": v["resolution"],
+                        "playlist": v["playlist_key"],
+                        "bandwidth": v.get("bandwidth"),
+                        "segment_count": v.get("segment_count"),
+                    }
+                    for v in variants
+                ],
+            },
             "errors": all_errors if all_errors else None,
         }
