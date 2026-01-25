@@ -26,7 +26,7 @@ RESOLUTION_CONFIG = {
 }
 
 # Default chunk duration in seconds (4s is common for HLS/DASH)
-DEFAULT_CHUNK_DURATION = 4
+DEFAULT_CHUNK_DURATION = 30
 
 
 @activity.defn
@@ -70,7 +70,7 @@ async def split_video(video_id: str, chunk_duration: int = DEFAULT_CHUNK_DURATIO
         
         success = storage.download_file(
             bucket_name="videos",
-            object_name=f"{video_id}.mp4",  # Legacy path for uploaded videos
+            object_name=StoragePaths.source_video(video_id),
             file_path=temp_input_path
         )
         
@@ -414,7 +414,7 @@ async def merge_segments(video_id: str, resolution: str, chunk_count: int) -> di
         
         upload_success = storage.upload_file(
             file_path=output_path,
-            bucket_name="encoded",
+            bucket_name="videos",
             object_name=final_key
         )
         
@@ -425,7 +425,7 @@ async def merge_segments(video_id: str, resolution: str, chunk_count: int) -> di
         
         activity.logger.info(
             f"[{video_id}] Merge complete for {resolution}: "
-            f"{output_size / (1024*1024):.2f} MB -> encoded/{final_key}"
+            f"{output_size / (1024*1024):.2f} MB -> videos/{final_key}"
         )
         
         return {

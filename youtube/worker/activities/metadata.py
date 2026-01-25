@@ -28,13 +28,14 @@ async def extract_metadata(video_id: str) -> dict:
     
     try:
         # Download video from MinIO
+        from shared.storage import StoragePaths
         activity.logger.info(f"Downloading video {video_id} from MinIO")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
             temp_video_path = tmp_file.name
         
         success = storage.download_file(
             bucket_name="videos",
-            object_name=f"{video_id}.mp4",
+            object_name=StoragePaths.source_video(video_id),
             file_path=temp_video_path
         )
         

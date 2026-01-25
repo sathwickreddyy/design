@@ -17,15 +17,20 @@ class StoragePaths:
     """
     Centralized storage path definitions.
     
-    Structure:
+    Structure (all under videos bucket):
         videos/{video_id}/
-            source/source.mp4
-            chunks/source/chunk_0000.mp4, ...
-            manifests/source.json
-            outputs/{resolution}/
-                segments/seg_0000.mp4, ...
-        encoded/
-            {video_id}_{resolution}.mp4  (final outputs)
+            source/
+                source.mp4
+                chunks/
+                    chunk_0000.mp4, chunk_0001.mp4, ...
+                manifest.json
+            outputs/
+                720p/
+                    segments/
+                        seg_0000.mp4, seg_0001.mp4, ...
+                    {video_id}_720p.mp4  (final merged)
+                480p/...
+                320p/...
     """
     
     @staticmethod
@@ -36,12 +41,12 @@ class StoragePaths:
     @staticmethod
     def source_chunk(video_id: str, chunk_index: int) -> str:
         """Path to a source chunk."""
-        return f"{video_id}/chunks/source/chunk_{chunk_index:04d}.mp4"
+        return f"{video_id}/source/chunks/chunk_{chunk_index:04d}.mp4"
     
     @staticmethod
     def source_manifest(video_id: str) -> str:
         """Path to source chunks manifest."""
-        return f"{video_id}/manifests/source.json"
+        return f"{video_id}/source/manifest.json"
     
     @staticmethod
     def output_segment(video_id: str, resolution: str, segment_index: int) -> str:
@@ -55,8 +60,8 @@ class StoragePaths:
     
     @staticmethod
     def final_video(video_id: str, resolution: str) -> str:
-        """Path to final merged video (in encoded bucket)."""
-        return f"{video_id}_{resolution}.mp4"
+        """Path to final merged video (same bucket, under outputs)."""
+        return f"{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4"
 
 
 class MinIOStorage:

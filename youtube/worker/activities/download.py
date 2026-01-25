@@ -82,10 +82,11 @@ async def download_youtube_video(video_id: str, youtube_url: str) -> dict:
         
         # Upload to MinIO with .mp4 extension
         logger.info(f"[{video_id}] Uploading to MinIO...")
+        from shared.storage import StoragePaths
         storage.upload_fileobj(
             file_data=file_content,
             bucket_name="videos",
-            object_name=f"{video_id}.mp4"
+            object_name=StoragePaths.source_video(video_id)
         )
         
         logger.info(f"[{video_id}] Upload complete")

@@ -69,7 +69,17 @@ class VideoWorkflow:
     Video processing workflow with parallel chunk-based multi-resolution transcoding.
     
     Pipeline:
-        Download -> Metadata -> Split -> Parallel Transcode Chunks -> Merge -> Cleanup
+        Download → Metadata → Split → Parallel Transcode Chunks → Merge
+    
+    Storage Flow:
+        videos/{video_id}/source/source.mp4                        # Input
+            ↓
+        videos/{video_id}/source/chunks/chunk_*.mp4                # Split output
+        videos/{video_id}/source/manifest.json                     # Ordering metadata
+            ↓
+        videos/{video_id}/outputs/{res}/segments/seg_*.mp4         # Transcoded chunks
+            ↓
+        videos/{video_id}/outputs/{res}/{video_id}_{res}.mp4      # Final merged videos
     
     Smart features:
         - Only downscales (never upscales)
@@ -84,18 +94,109 @@ class VideoWorkflow:
         """
         Execute the video processing workflow with chunk-based transcoding.
         
+        INPUT:
+            - video_id: str             → Unique identifier (timestamp_hash)
+            - youtube_url: str (opt)    → If provided, downloads from YouTube
+            
+            Expected MinIO State (if no youtube_url):
+                videos/{video_id}/source/source.mp4   → Source video exists
+        
+        OUTPUT (MinIO):
+            videos/{video_id}/
+                source/
+                    source.mp4          → Original video
+                    chunks/
+                        chunk_0000.mp4, chunk_0001.mp4, ... chunk_N.mp4
+                    manifest.json       → {"chunk_count": N, "chunks": [...]}
+                outputs/
+                    720p/
+                        segments/       → seg_0000.mp4 ... seg_N.mp4
+                        {video_id}_720p.mp4     → Final merged 720p video
+                    480p/
+                        segments/       → seg_0000.mp4 ... seg_N.mp4
+                        {video_id}_480p.mp4     → Final merged 480p video
+                    320p/
+                        segments/       → seg_0000.mp4 ... seg_N.mp4
+                        {video_id}_320p.mp4     → Final merged 320p video
+        
+        OUTPUT (Return):
+            {
+                "success": bool,
+                "video_id": str,
+                "metadata": {"width": int, "height": int, "duration": float, ...},
+                "source_resolution": "1920x1080",
+                "chunk_count": int,
+                "transcoded": [
+                    {
+                        "video_id": str,
+                        "resolution": "720p",
+                        "output_key": "{video_id}_720p.mp4",
+                        "output_size_bytes": int
+                    },
+                    ...
+                ],
+                "errors": [...] or None
+            }
+        
+        ACTIVITY STEPS:
+        
+        1. download_youtube_video (if youtube_url provided)
+           Input:  video_id, youtube_url
+           Action: • Downloads video using yt-dlp (max 1080p)
+                   • Uploads to videos/{video_id}/source/source.mp4
+           Output: {"title": str, "duration_seconds": int, "file_size_bytes": int}
+        
+        2. extract_metadata
+           Input:  video_id
+           Source: videos/{video_id}/source/source.mp4
+           Action: • Runs ffprobe to get width, height, duration, codec
+           Output: {"width": 1920, "height": 1080, "duration": 120.5, ...}
+        
+        3. split_video
+           Input:  video_id, chunk_duration=4
+           Source: videos/{video_id}/source/source.mp4
+           Action: • Splits at GOP boundaries using ffmpeg -f segment -c copy
+                   • Creates 4-second chunks (no re-encoding)
+                   • Uploads to videos/{video_id}/source/chunks/chunk_NNNN.mp4
+                   • Creates manifest with ordering metadata
+           Output: videos/{video_id}/source/chunks/chunk_0000..N.mp4
+                   videos/{video_id}/source/manifest.json
+                   Returns: {"chunk_count": N, "chunks": [{"index": 0, "key": ...}]}
+        
+        4. transcode_chunk (parallel: chunks × resolutions)
+           Input:  video_id, chunk_index, resolution, source_chunk_key
+           Source: videos/{video_id}/source/chunks/chunk_NNNN.mp4
+           Action: • Downloads source chunk
+                   • Transcodes to target resolution using ffmpeg
+                   • Applies: scale filter, h264 encoder, aac audio
+                   • Uploads to videos/{video_id}/outputs/{res}/segments/seg_NNNN.mp4
+           Output: videos/{video_id}/outputs/{resolution}/segments/seg_NNNN.mp4
+                   Returns: {"chunk_index": N, "resolution": "720p", "output_key": ...}
+           
+           Example: 10 chunks × 3 resolutions = 30 parallel tasks
+        
+        5. merge_segments (per resolution)
+           Input:  video_id, resolution, chunk_count
+           Source: videos/{video_id}/outputs/{resolution}/segments/seg_0000..N.mp4
+           Action: • Downloads all segments in order (0..N)
+                   • Creates ffmpeg concat file
+                   • Merges using ffmpeg -f concat -c copy (no re-encoding)
+                   • Uploads to videos/{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4
+           Output: videos/{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4
+                   Returns: {"resolution": "720p", "output_key": ..., "output_size_bytes": ...}
+        
+        FAILURE HANDLING:
+            • Each activity retries up to 5 times with exponential backoff
+            • If chunk transcoding fails, only that chunk retries
+            • If entire resolution fails, continues with other resolutions
+            • Workflow succeeds if ≥1 resolution completes successfully
+        
         Args:
             video_id: Unique identifier for the video in MinIO
             youtube_url: Optional YouTube URL (if None, assumes video already in MinIO)
             
         Returns:
-            Dictionary with:
-            - success: bool
-            - video_id: str
-            - metadata: dict (video metadata)
-            - chunk_count: int (number of chunks processed)
-            - transcoded: list (results for each resolution)
-            - error: str (if failed)
+            Dictionary with success status, metadata, and transcoded video information
         """
         # Retry policy: max 5 attempts with exponential backoff
         retry_policy = RetryPolicy(
