@@ -5,6 +5,7 @@
 - **Orchestrator:** Temporal (Durable Execution)
 - **Workers:** Python + FFmpeg (Stateless Compute)
 - **Storage:** Minio (S3-Compatible)
+- **Logging:** ELK Stack (Centralized, Shared)
 
 ## 📊 Milestone Tracker
 
@@ -14,6 +15,8 @@
 | **M1** | Hello Transcode | ✅ Done | Temporal Workflows & Activity patterns |
 | **M2** | Parallel DAG | ✅ Done | Chunk-based parallel transcoding |
 | **M3** | Failure Injection| 🔘 Todo | Idempotency & Retries (Staff Skill) |
+| **M4** | Observability | ✅ Done | Centralized logging with ELK Stack |
+
 
 ## 🛠 Design Decisions
 - **Why Temporal?** To avoid writing complex state-machine logic for retries.
@@ -162,6 +165,28 @@ sequenceDiagram
 
 ## 🚀 Quick Start
 
+### Prerequisites: Start the ELK Stack (One-time, Shared Across Projects)
+
+The logging infrastructure is **separate** from this project. Start it once:
+
+```bash
+# Start the shared ELK stack (if not already running)
+cd ~/my-office/system-design-learning/elk-stack
+docker-compose up -d
+
+# Wait ~60 seconds for Elasticsearch to initialize
+curl http://localhost:9200/_cluster/health?pretty
+# Look for "status": "yellow" or "green"
+```
+
+**📖 New to ELK?** Read the complete guide: [`elk-stack/BEGINNER_GUIDE.md`](../elk-stack/BEGINNER_GUIDE.md)
+
+**⚡ Quick Reference:** [`elk-stack/QUICK_START.md`](../elk-stack/QUICK_START.md)
+
+---
+
+### Start the YouTube Transcoding Engine
+
 ```bash
 cd docker
 docker-compose up -d
@@ -170,7 +195,17 @@ docker-compose up -d
 # - API: http://localhost:8000
 # - Temporal UI: http://localhost:8080
 # - MinIO Console: http://localhost:9001 (admin/password123)
+# - Kibana (Logs): http://localhost:5601
 ```
+
+### View Logs in Kibana
+
+1. Open **http://localhost:5601**
+2. Go to **Menu → Stack Management → Index Patterns**
+3. Create pattern: `filebeat-*` with `@timestamp` as time field
+4. Go to **Menu → Analytics → Discover**
+5. Filter: `container.name: youtube-*`
+6. Watch your distributed system in action! 🎬
 
 ---
 

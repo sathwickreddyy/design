@@ -183,3 +183,9 @@ services:
 volumes:
   postgres_data:
   minio_data:
+# Connect to shared ELK observability network
+# Ensure elk-stack is running first: cd ../elk-stack && docker-compose up -d
+networks:
+  default:
+    name: observability-net
+    external: true
