@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from worker.activities.chunked_transcode import (
     split_video,
     transcode_chunk,
-    merge_segments,
+    generate_hls_playlist,
+    generate_master_playlist,
     cleanup_source_chunks,
 )
 
@@ -76,11 +77,11 @@ async def run_transcode_chunk_worker():
     await worker.run()
 
 
-async def run_merge_worker():
+async def run_playlist_worker():
     """
-    Run worker for merge-queue (merge_segments activity).
+    Run worker for playlist-queue (HLS playlist generation).
     
-    Merge is I/O-heavy (downloads + uploads) but uses copy codec.
+    Generates m3u8 playlists - instant (text file creation).
     """
     temporal_host = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     logger.info(f"Connecting to Temporal at {temporal_host}")
@@ -89,11 +90,11 @@ async def run_merge_worker():
     
     worker = Worker(
         client,
-        task_queue="merge-queue",
-        activities=[merge_segments],
+        task_queue="playlist-queue",
+        activities=[generate_hls_playlist, generate_master_playlist],
     )
     
-    logger.info("Starting merge-queue worker (merge_segments)")
+    logger.info("Starting playlist-queue worker (HLS m3u8 generation)")
     await worker.run()
 
 
@@ -104,15 +105,15 @@ def main():
     WORKER_TYPE options:
       - split: split-queue worker
       - transcode: transcode-queue worker (default)
-      - merge: merge-queue worker
+      - playlist: playlist-queue worker (HLS m3u8 generation)
       - all: all queues in one worker (dev only)
     """
     worker_type = os.getenv("WORKER_TYPE", "transcode").lower()
     
     if worker_type == "split":
         asyncio.run(run_split_worker())
-    elif worker_type == "merge":
-        asyncio.run(run_merge_worker())
+    elif worker_type == "playlist":
+        asyncio.run(run_playlist_worker())
     elif worker_type == "all":
         # Dev mode: run all activities in one worker
         asyncio.run(run_all_workers())
@@ -144,10 +145,10 @@ async def run_all_workers():
         activities=[transcode_chunk],
     )
     
-    merge_worker = Worker(
+    playlist_worker = Worker(
         client,
-        task_queue="merge-queue",
-        activities=[merge_segments],
+        task_queue="playlist-queue",
+        activities=[generate_hls_playlist, generate_master_playlist],
     )
     
     logger.info("Starting all chunked transcode workers (dev mode)")
@@ -156,7 +157,7 @@ async def run_all_workers():
     await asyncio.gather(
         split_worker.run(),
         transcode_worker.run(),
-        merge_worker.run(),
+        playlist_worker.run(),
     )
 
 

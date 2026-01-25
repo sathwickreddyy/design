@@ -126,3 +126,6 @@ async def extract_metadata(video_id: str) -> dict:
         if temp_video_path and Path(temp_video_path).exists():
             Path(temp_video_path).unlink()
             activity.logger.info(f"Cleaned up temporary file: {temp_video_path}")
+
+
+__all__ = ["extract_metadata"]

@@ -101,3 +101,6 @@ async def download_youtube_video(video_id: str, youtube_url: str) -> dict:
     except Exception as e:
         logger.error(f"[{video_id}] Download failed: {e}")
         raise Exception(f"Failed to download YouTube video: {str(e)}")
+
+
+__all__ = ["download_youtube_video"]

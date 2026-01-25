@@ -584,3 +584,13 @@ async def cleanup_source_chunks(video_id: str, chunk_count: int) -> dict:
             "success": False,
             "error": str(e)
         }
+
+
+# Export all activity functions
+__all__ = [
+    "split_video",
+    "transcode_chunk",
+    "generate_hls_playlist",
+    "generate_master_playlist",
+    "cleanup_source_chunks",
+]

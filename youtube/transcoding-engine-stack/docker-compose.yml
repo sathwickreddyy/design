@@ -162,8 +162,8 @@ services:
     deploy:
       replicas: 4  # Scale for parallelism
 
-  # Merge Worker (segment assembly)
-  youtube-merge-worker:
+  # Playlist Worker (HLS m3u8 generation)
+  youtube-playlist-worker:
     build:
       context: ..
       dockerfile: transcoding-engine-stack/worker.Dockerfile
@@ -175,10 +175,10 @@ services:
       - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=password123
-      - WORKER_TYPE=merge
+      - WORKER_TYPE=playlist
     command: ["python", "-m", "worker.run_chunked_worker"]
     deploy:
-      replicas: 2
+      replicas: 1  # Playlist generation is instant (text files)
 
 volumes:
   postgres_data:
