@@ -26,7 +26,7 @@ RESOLUTION_CONFIG = {
 }
 
 # Default chunk duration in seconds (4s is common for HLS/DASH)
-DEFAULT_CHUNK_DURATION = 30
+DEFAULT_CHUNK_DURATION = 4
 
 
 @activity.defn
@@ -257,6 +257,10 @@ async def transcode_chunk(
             "-c:a", "aac",
             "-b:a", "128k",
             "-f", "mpegts",  # Output as MPEG-TS for HLS compatibility
+            "-muxdelay", "0",  # Minimize muxing delay
+            "-muxpreload", "0",  # No preload buffering
+            "-avoid_negative_ts", "make_zero",  # Ensure positive timestamps
+            "-fflags", "+genpts+igndts",  # Generate PTS, ignore input DTS discontinuities
             "-y",
             temp_output_path
         ]
