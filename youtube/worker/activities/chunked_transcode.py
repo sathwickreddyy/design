@@ -185,29 +185,125 @@ async def split_video(video_id: str, chunk_duration: int = DEFAULT_CHUNK_DURATIO
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def escape_ffmpeg_text(text: str) -> str:
+    """
+    Escape special characters for FFmpeg drawtext filter.
+    
+    FFmpeg drawtext filter has specific escaping requirements:
+    - Colons must be escaped with backslash
+    - Single quotes need special handling
+    - Backslashes need doubling
+    - Newlines should be removed
+    
+    Args:
+        text: Raw text to escape
+        
+    Returns:
+        Escaped text safe for FFmpeg drawtext
+    """
+    if not text:
+        return ""
+    
+    # Remove newlines and tabs
+    text = text.replace('\n', ' ').replace('\r', '').replace('\t', ' ')
+    
+    # Escape backslashes first (before adding more)
+    text = text.replace('\\', '\\\\')
+    
+    # Escape single quotes (FFmpeg uses '' to escape ')
+    text = text.replace("'", "'\\''")
+    
+    # Escape colons (required for drawtext filter)
+    text = text.replace(':', '\\:')
+    
+    # Escape other special chars
+    text = text.replace('%', '\\%')
+    
+    return text
+
+
+def build_watermark_filter(
+    text: str,
+    position: str = "bottom-right",
+    font_size: int = 24,
+    opacity: float = 0.5
+) -> str:
+    """
+    Build FFmpeg drawtext filter for watermark overlay.
+    
+    Positions:
+        - top-left: x=10:y=10
+        - top-right: x=w-tw-10:y=10
+        - bottom-left: x=10:y=h-th-10
+        - bottom-right: x=w-tw-10:y=h-th-10
+        - center: x=(w-tw)/2:y=(h-th)/2
+    
+    Args:
+        text: Watermark text
+        position: Position on video frame
+        font_size: Font size in pixels
+        opacity: Background box opacity (0-1)
+        
+    Returns:
+        FFmpeg drawtext filter string
+    """
+    escaped_text = escape_ffmpeg_text(text)
+    
+    # Position coordinates
+    positions = {
+        "top-left": "x=10:y=10",
+        "top-right": "x=w-tw-10:y=10",
+        "bottom-left": "x=10:y=h-th-10",
+        "bottom-right": "x=w-tw-10:y=h-th-10",
+        "center": "x=(w-tw)/2:y=(h-th)/2"
+    }
+    
+    pos = positions.get(position, positions["bottom-right"])
+    
+    # Build the filter
+    # box=1 enables background box, boxcolor with alpha for semi-transparent
+    filter_str = (
+        f"drawtext=text='{escaped_text}':"
+        f"fontcolor=white:fontsize={font_size}:"
+        f"box=1:boxcolor=black@{opacity}:boxborderw=5:"
+        f"{pos}"
+    )
+    
+    return filter_str
+
+
 @activity.defn
 async def transcode_chunk(
     video_id: str,
     chunk_index: int,
     resolution: str,
-    source_chunk_key: str
+    source_chunk_key: str,
+    watermark_text: str = None,
+    watermark_position: str = "bottom-right",
+    watermark_font_size: int = 24,
+    watermark_opacity: float = 0.5
 ) -> dict:
     """
-    Transcode a single chunk to target resolution.
+    Transcode a single chunk to target resolution with optional watermark.
     
     Purpose: Process one chunk independently for parallel execution.
     Consumers: Workflow orchestrator spawning parallel tasks.
     Logic:
       1. Download source chunk from MinIO
-      2. Transcode to target resolution using ffmpeg
-      3. Upload encoded chunk to MinIO: videos/{video_id}/outputs/{resolution}/segments/
-      4. Cleanup temp files
+      2. Build video filter (scale + optional watermark)
+      3. Transcode to target resolution using ffmpeg
+      4. Upload encoded chunk to MinIO: videos/{video_id}/outputs/{resolution}/segments/
+      5. Cleanup temp files
     
     Args:
         video_id: Unique identifier for the video
         chunk_index: Index of the chunk (for ordering)
         resolution: Target resolution (e.g., "720p")
         source_chunk_key: MinIO key for the source chunk
+        watermark_text: Optional text to overlay on video
+        watermark_position: Position of watermark (top-left, top-right, bottom-left, bottom-right)
+        watermark_font_size: Font size for watermark text
+        watermark_opacity: Opacity of watermark background (0-1)
         
     Returns:
         Dictionary with:
@@ -215,10 +311,12 @@ async def transcode_chunk(
         - chunk_index: int
         - resolution: str
         - output_key: str (path to encoded chunk in MinIO)
+        - has_watermark: bool
         - success: bool
     """
     activity.logger.info(
         f"[{video_id}] Transcoding chunk {chunk_index} to {resolution}"
+        + (f" with watermark" if watermark_text else "")
     )
     
     if resolution not in RESOLUTION_CONFIG:
@@ -243,14 +341,34 @@ async def transcode_chunk(
         if not success:
             raise RuntimeError(f"Failed to download chunk {source_chunk_key}")
         
-        # Step 2: Transcode chunk to HLS-compatible MPEG-TS format
+        # Step 2: Build video filter chain
+        # Start with scale filter
+        filters = [config["scale"]]
+        
+        # Add watermark if provided
+        has_watermark = False
+        if watermark_text and watermark_text.strip():
+            watermark_filter = build_watermark_filter(
+                text=watermark_text.strip(),
+                position=watermark_position,
+                font_size=watermark_font_size,
+                opacity=watermark_opacity
+            )
+            filters.append(watermark_filter)
+            has_watermark = True
+            activity.logger.debug(f"[{video_id}] Watermark filter: {watermark_filter}")
+        
+        # Combine filters with comma separator
+        video_filter = ",".join(filters)
+        
+        # Step 3: Transcode chunk to HLS-compatible MPEG-TS format
         with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{resolution}.ts") as tmp_out:
             temp_output_path = tmp_out.name
         
         cmd = [
             "ffmpeg",
             "-i", temp_input_path,
-            "-vf", config["scale"],
+            "-vf", video_filter,
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", "23",
@@ -278,7 +396,8 @@ async def transcode_chunk(
             )
             raise RuntimeError(f"ffmpeg failed for chunk {chunk_index}")
         
-        # Step 3: Upload encoded chunk
+        
+        # Step 4: Upload encoded chunk
         output_key = StoragePaths.output_segment(video_id, resolution, chunk_index)
         
         upload_success = storage.upload_file(
@@ -296,6 +415,7 @@ async def transcode_chunk(
         activity.logger.info(
             f"[{video_id}] Chunk {chunk_index} -> {resolution} complete: "
             f"{input_size / 1024:.1f}KB -> {output_size / 1024:.1f}KB"
+            + (f" (watermarked)" if has_watermark else "")
         )
         
         return {
@@ -305,6 +425,7 @@ async def transcode_chunk(
             "output_key": output_key,
             "input_size_bytes": input_size,
             "output_size_bytes": output_size,
+            "has_watermark": has_watermark,
             "success": True
         }
         

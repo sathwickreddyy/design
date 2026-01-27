@@ -1,0 +1,79 @@
+# High-Level Architecture - Interview Opener (30 seconds)
+# "Let me show you the overall system..."
+
+direction: right
+
+title: |md
+  # Video Transcoding System - High Level
+  _User uploads video → System processes → Multiple quality streams available_
+|
+
+# Main actors
+user: User {
+  shape: person
+  style.fill: "#e1f5fe"
+}
+
+# Client layer
+client: Web/Mobile Client {
+  shape: rectangle
+  style.fill: "#fff3e0"
+}
+
+# API layer
+api: FastAPI Server {
+  shape: rectangle
+  style.fill: "#e8f5e9"
+  style.stroke: "#2e7d32"
+  style.stroke-width: 2
+}
+
+# Storage
+storage: Object Storage\n(MinIO/S3) {
+  shape: cylinder
+  style.fill: "#fce4ec"
+}
+
+# Workflow orchestration
+temporal: Temporal\n(Workflow Engine) {
+  shape: hexagon
+  style.fill: "#f3e5f5"
+  style.stroke: "#7b1fa2"
+  style.stroke-width: 2
+}
+
+# Workers
+workers: Transcoding Workers {
+  shape: rectangle
+  style.fill: "#e3f2fd"
+  style.stroke: "#1565c0"
+  style.stroke-width: 2
+  
+  icon: https://img.icons8.com/fluency/48/000000/server.png
+}
+
+# CDN
+cdn: CDN / Player {
+  shape: cloud
+  style.fill: "#fff8e1"
+}
+
+# Connections with labels
+user -> client: Upload video
+client -> api: POST /videos
+api -> storage: Store original
+api -> temporal: Start workflow
+temporal -> workers: Distribute tasks
+workers -> storage: Store encoded
+storage -> cdn: Serve streams
+cdn -> user: HLS playback
+
+# Annotation
+note: |md
+  **Key Points:**
+  - Async processing (user doesn't wait)
+  - Multiple quality outputs (480p, 720p, 1080p)
+  - Scalable workers
+| {
+  style.fill: "#fffde7"
+}

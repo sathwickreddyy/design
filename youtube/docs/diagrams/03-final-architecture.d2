@@ -1,0 +1,381 @@
+# Final Architecture - Complete System (Detailed Discussion)
+# "Here's the full picture with all components..."
+
+direction: down
+
+title: |md
+  # Smart DAG Video Transcoding - Complete Architecture
+  _Conditional branching, parallel execution, graceful degradation_
+|
+
+# ═══════════════════════════════════════════════════════════════
+# CLIENT LAYER
+# ═══════════════════════════════════════════════════════════════
+
+clients: Client Layer {
+  style.fill: "#e3f2fd"
+  
+  web: Web App {
+    shape: rectangle
+  }
+  mobile: Mobile App {
+    shape: rectangle
+  }
+  api_client: API Client {
+    shape: rectangle
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# API LAYER
+# ═══════════════════════════════════════════════════════════════
+
+api_layer: API Layer {
+  style.fill: "#e8f5e9"
+  
+  fastapi: FastAPI Server {
+    shape: rectangle
+    style.stroke: "#2e7d32"
+    style.stroke-width: 2
+    
+    endpoints: |md
+      **Endpoints:**
+      - POST /videos (upload)
+      - GET /videos/{id} (status)
+      - GET /videos/{id}/stream (HLS)
+    |
+  }
+  
+  temporal_client: Temporal Client {
+    shape: rectangle
+    style.fill: "#f3e5f5"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# STORAGE LAYER
+# ═══════════════════════════════════════════════════════════════
+
+storage: Storage Layer (MinIO/S3) {
+  style.fill: "#fce4ec"
+  
+  videos_bucket: videos/ {
+    shape: cylinder
+    style.fill: "#f8bbd9"
+    label: "Original uploads"
+  }
+  
+  encoded_bucket: encoded/ {
+    shape: cylinder
+    style.fill: "#f8bbd9"
+    label: "Transcoded chunks\n& playlists"
+  }
+  
+  thumbnails_bucket: thumbnails/ {
+    shape: cylinder
+    style.fill: "#f8bbd9"
+    label: "Video thumbnails"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# TEMPORAL WORKFLOW ENGINE
+# ═══════════════════════════════════════════════════════════════
+
+temporal: Temporal Workflow Engine {
+  style.fill: "#f3e5f5"
+  style.stroke: "#7b1fa2"
+  style.stroke-width: 3
+  
+  # The Smart DAG Workflow
+  workflow: VideoWorkflow (Smart DAG) {
+    style.fill: "#e1bee7"
+    style.stroke: "#7b1fa2"
+    style.stroke-width: 2
+    
+    # Stages represented as a flow
+    stage1: "Stage 1:\nDownload" {
+      shape: rectangle
+      style.fill: "#bbdefb"
+    }
+    
+    stage2: "Stage 2:\nMetadata" {
+      shape: rectangle
+      style.fill: "#c8e6c9"
+    }
+    
+    stage3: "Stage 3:\nSplit Chunks" {
+      shape: rectangle
+      style.fill: "#fff9c4"
+    }
+    
+    # Conditional branches
+    branch_point: Conditional Branch {
+      shape: diamond
+      style.fill: "#ffecb3"
+    }
+    
+    stage4: "Stage 4:\nThumbnail\n(optional)" {
+      shape: rectangle
+      style.fill: "#b2dfdb"
+      style.stroke-dash: 3
+    }
+    
+    stage5: "Stage 5:\nScene Detect\n(optional)" {
+      shape: rectangle
+      style.fill: "#b2dfdb"
+      style.stroke-dash: 3
+    }
+    
+    stage6: "Stage 6:\nTranscode\n(parallel)" {
+      shape: rectangle
+      style.fill: "#ffccbc"
+      style.stroke: "#e64a19"
+      style.stroke-width: 2
+    }
+    
+    stage7: "Stage 7:\nGenerate\nPlaylist" {
+      shape: rectangle
+      style.fill: "#d1c4e9"
+    }
+    
+    stage8: "Stage 8:\nCompletion\nWorkflow" {
+      shape: rectangle
+      style.fill: "#f0f4c3"
+    }
+    
+    # Flow connections
+    stage1 -> stage2
+    stage2 -> stage3
+    stage3 -> branch_point
+    
+    branch_point -> stage4: "if thumbnail\noption" {
+      style.stroke-dash: 3
+    }
+    branch_point -> stage5: "if chapters\noption" {
+      style.stroke-dash: 3
+    }
+    branch_point -> stage6: "always"
+    
+    stage4 -> stage6: "parallel" {
+      style.stroke-dash: 3
+    }
+    stage5 -> stage6: "parallel" {
+      style.stroke-dash: 3
+    }
+    
+    stage6 -> stage7
+    stage7 -> stage8
+  }
+  
+  # Task Queues
+  queues: Task Queues {
+    style.fill: "#ede7f6"
+    
+    q1: download-queue {shape: queue}
+    q2: metadata-queue {shape: queue}
+    q3: split-queue {shape: queue}
+    q4: transcode-queue {
+      shape: queue
+      style.fill: "#ffccbc"
+    }
+    q5: playlist-queue {shape: queue}
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# WORKER FLEET
+# ═══════════════════════════════════════════════════════════════
+
+workers: Worker Fleet {
+  style.fill: "#e3f2fd"
+  style.stroke: "#1565c0"
+  style.stroke-width: 2
+  
+  # Worker types
+  download_workers: Download Workers\n(2-5 pods) {
+    shape: rectangle
+    style.fill: "#90caf9"
+  }
+  
+  metadata_workers: Metadata Workers\n(2-5 pods) {
+    shape: rectangle
+    style.fill: "#a5d6a7"
+    label: |md
+      **Activities:**
+      - extract_metadata
+      - generate_thumbnail
+      - detect_scenes
+    |
+  }
+  
+  chunk_workers: Chunk Workers\n(2-3 pods) {
+    shape: rectangle
+    style.fill: "#fff59d"
+  }
+  
+  transcode_workers: Transcode Workers\n(5-50 pods, GPU optional) {
+    shape: rectangle
+    style.fill: "#ffab91"
+    style.stroke: "#e64a19"
+    style.stroke-width: 2
+    label: |md
+      **Activities:**
+      - transcode_chunk
+      - apply_watermark
+    |
+  }
+  
+  playlist_workers: Playlist Workers\n(1-2 pods) {
+    shape: rectangle
+    style.fill: "#b39ddb"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# COMPLETION / POST-PROCESSING
+# ═══════════════════════════════════════════════════════════════
+
+completion: Completion Layer {
+  style.fill: "#f0f4c3"
+  
+  completion_workflow: CompletionWorkflow {
+    shape: rectangle
+    style.fill: "#dce775"
+    
+    tasks: |md
+      **Post-Processing:**
+      1. Update database
+      2. Invalidate cache
+      3. Warm CDN
+      4. Send notifications
+      5. Update search index
+    |
+  }
+  
+  database: PostgreSQL {
+    shape: cylinder
+    style.fill: "#fff9c4"
+  }
+  
+  cache: Redis Cache {
+    shape: cylinder
+    style.fill: "#ffccbc"
+  }
+  
+  notifications: Notification\nService {
+    shape: rectangle
+    style.fill: "#b2dfdb"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CDN / DELIVERY
+# ═══════════════════════════════════════════════════════════════
+
+cdn: Content Delivery {
+  shape: cloud
+  style.fill: "#fff8e1"
+  style.stroke: "#f57c00"
+  style.stroke-width: 2
+  
+  label: |md
+    **CloudFront / Cloudflare**
+    - HLS streaming
+    - Geo-distributed
+    - Edge caching
+  |
+}
+
+# ═══════════════════════════════════════════════════════════════
+# DATA CONTRACTS
+# ═══════════════════════════════════════════════════════════════
+
+contracts: Data Contracts {
+  style.fill: "#eceff1"
+  
+  processing_options: ProcessingOptions {
+    shape: class
+    style.fill: "#f5f5f5"
+    resolutions: "list[str] | None"
+    thumbnail: "ThumbnailOptions | None"
+    watermark: "WatermarkOptions | None"
+    chapters: "ChapterOptions | None"
+  }
+  
+  video_input: VideoInput {
+    shape: class
+    style.fill: "#f5f5f5"
+    video_id: str
+    s3_key: str
+    options: "ProcessingOptions | None"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CONNECTIONS
+# ═══════════════════════════════════════════════════════════════
+
+# Client to API
+clients -> api_layer.fastapi: HTTPS
+
+# API to Storage
+api_layer.fastapi -> storage.videos_bucket: Upload original
+
+# API to Temporal
+api_layer.temporal_client -> temporal.workflow: Start workflow
+
+# Temporal to Workers
+temporal.queues.q1 -> workers.download_workers
+temporal.queues.q2 -> workers.metadata_workers
+temporal.queues.q3 -> workers.chunk_workers
+temporal.queues.q4 -> workers.transcode_workers {
+  style.stroke: "#e64a19"
+  style.stroke-width: 2
+}
+temporal.queues.q5 -> workers.playlist_workers
+
+# Workers to Storage
+workers.download_workers -> storage.videos_bucket: Read
+workers.metadata_workers -> storage.thumbnails_bucket: Write
+workers.transcode_workers -> storage.encoded_bucket: Write
+
+# Completion
+temporal.workflow.stage8 -> completion.completion_workflow
+completion.completion_workflow -> completion.database
+completion.completion_workflow -> completion.cache
+completion.completion_workflow -> completion.notifications
+
+# CDN
+storage.encoded_bucket -> cdn: Origin
+cdn -> clients: Stream
+
+# ═══════════════════════════════════════════════════════════════
+# ANNOTATIONS / LEGENDS
+# ═══════════════════════════════════════════════════════════════
+
+legend: Legend {
+  shape: rectangle
+  style.fill: "#ffffff"
+  style.font-size: 14
+  
+  content: |md
+    **Solid border** = Required path
+    **Dashed border** = Optional
+    **Orange** = Hot path (scale)
+    **Cylinder** = Storage
+    **Diamond** = Decision
+  |
+}
+
+failure_handling: Failure Domains {
+  shape: rectangle
+  style.fill: "#ffebee"
+  style.font-size: 14
+  
+  content: |md
+    **Critical:** Download → Transcode → Playlist
+    **Enhancement:** Thumbnail, Chapters
+    _(failures logged, don't block video)_
+  |
+}

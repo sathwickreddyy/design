@@ -1,0 +1,142 @@
+# Design Deep-Dive - Queue Architecture (2 minutes)
+# "Now let me explain how we handle scale..."
+
+direction: down
+
+title: |md
+  # Queue-Based Worker Architecture
+  _Specialized queues for different workloads_
+|
+
+# ═══════════════════════════════════════════════════════════════
+# TEMPORAL SERVER
+# ═══════════════════════════════════════════════════════════════
+
+temporal: Temporal Server {
+  style.fill: "#f3e5f5"
+  style.stroke: "#7b1fa2"
+  style.stroke-width: 3
+  
+  workflow_queue: video-tasks\n(Workflow Orchestration) {
+    shape: queue
+    style.fill: "#e1bee7"
+  }
+  
+  queues: Task Queues {
+    style.fill: "#f8f8f8"
+    
+    download_q: download-queue {
+      shape: queue
+      style.fill: "#bbdefb"
+    }
+    
+    metadata_q: metadata-queue {
+      shape: queue  
+      style.fill: "#c8e6c9"
+    }
+    
+    split_q: split-queue {
+      shape: queue
+      style.fill: "#fff9c4"
+    }
+    
+    transcode_q: transcode-queue {
+      shape: queue
+      style.fill: "#ffccbc"
+      style.stroke: "#e64a19"
+      style.stroke-width: 2
+    }
+    
+    playlist_q: playlist-queue {
+      shape: queue
+      style.fill: "#d1c4e9"
+    }
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# WORKERS
+# ═══════════════════════════════════════════════════════════════
+
+workers: Worker Pool {
+  style.fill: "#e3f2fd"
+  
+  workflow_worker: Workflow Worker\n(1-2 pods) {
+    shape: rectangle
+    style.fill: "#90caf9"
+    label: "Lightweight\nOrchestration only"
+  }
+  
+  download_worker: Download Worker\n(2-5 pods) {
+    shape: rectangle
+    style.fill: "#90caf9"
+    label: "I/O bound\nNetwork limited"
+  }
+  
+  metadata_worker: Metadata Worker\n(2-5 pods) {
+    shape: rectangle
+    style.fill: "#a5d6a7"
+    label: "CPU light\nFFprobe calls"
+  }
+  
+  chunk_worker: Chunk Worker\n(2-3 pods) {
+    shape: rectangle
+    style.fill: "#fff59d"
+    label: "Fast split\nFFmpeg -c copy"
+  }
+  
+  transcode_worker: Transcode Worker\n(5-50 pods) {
+    shape: rectangle
+    style.fill: "#ffab91"
+    style.stroke: "#e64a19"
+    style.stroke-width: 2
+    label: "CPU HEAVY\nAuto-scales"
+  }
+  
+  playlist_worker: Playlist Worker\n(1-2 pods) {
+    shape: rectangle
+    style.fill: "#b39ddb"
+    label: "Fast merge\nM3U8 generation"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CONNECTIONS
+# ═══════════════════════════════════════════════════════════════
+
+temporal.workflow_queue -> workers.workflow_worker: Poll
+temporal.queues.download_q -> workers.download_worker: Poll
+temporal.queues.metadata_q -> workers.metadata_worker: Poll
+temporal.queues.split_q -> workers.chunk_worker: Poll
+temporal.queues.transcode_q -> workers.transcode_worker: Poll {
+  style.stroke: "#e64a19"
+  style.stroke-width: 2
+}
+temporal.queues.playlist_q -> workers.playlist_worker: Poll
+
+# ═══════════════════════════════════════════════════════════════
+# ANNOTATIONS
+# ═══════════════════════════════════════════════════════════════
+
+scaling_note: |md
+  ## Why Separate Queues?
+  
+  **Problem with single queue:**
+  - 300s transcode jobs block 10s downloads
+  - Head-of-line blocking
+  
+  **With separate queues:**
+  - Each workload scales independently
+  - Heavy compute isolated
+  - I/O workers stay responsive
+| {
+  style.fill: "#fffde7"
+}
+
+transcode_note: |md
+  **Hot Path**
+  Most compute here
+  Auto-scale 5→50
+| {
+  style.fill: "#fff3e0"
+}

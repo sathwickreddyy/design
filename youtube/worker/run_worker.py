@@ -3,7 +3,7 @@ import logging
 import os
 from temporalio.client import Client
 from temporalio.worker import Worker
-from shared.workflows import VideoWorkflow
+from shared.workflows import VideoWorkflow, VideoCompletionWorkflow
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,7 +17,7 @@ async def main():
     worker = Worker(
         client,
         task_queue="video-tasks",  # Workflow execution queue
-        workflows=[VideoWorkflow],
+        workflows=[VideoWorkflow, VideoCompletionWorkflow],
         activities=[],  # No activities - just workflow orchestration
     )
 

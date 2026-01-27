@@ -72,6 +72,42 @@ class StoragePaths:
     def final_video(video_id: str, resolution: str) -> str:
         """Path to final merged video (same bucket, under outputs). DEPRECATED: Use HLS playlists instead."""
         return f"{video_id}/outputs/{resolution}/{video_id}_{resolution}.mp4"
+    
+    # ==================== Thumbnail Paths ====================
+    
+    @staticmethod
+    def thumbnail(video_id: str) -> str:
+        """Path to video thumbnail (in thumbnails bucket)."""
+        return f"{video_id}/thumbnail.jpg"
+    
+    @staticmethod
+    def custom_thumbnail_upload(video_id: str, filename: str) -> str:
+        """Path for user-uploaded custom thumbnail."""
+        return f"{video_id}/custom/{filename}"
+    
+    # ==================== Chapter/Scene Paths ====================
+    
+    @staticmethod
+    def chapters_json(video_id: str) -> str:
+        """Path to chapters metadata JSON file."""
+        return f"{video_id}/outputs/chapters.json"
+    
+    @staticmethod
+    def chapters_vtt(video_id: str) -> str:
+        """Path to WebVTT chapters file for HTML5 players."""
+        return f"{video_id}/outputs/chapters.vtt"
+    
+    @staticmethod
+    def chapters_hls(video_id: str) -> str:
+        """Path to HLS chapter tags file."""
+        return f"{video_id}/outputs/chapters_hls.txt"
+    
+    # ==================== Processing Metadata ====================
+    
+    @staticmethod
+    def processing_status(video_id: str) -> str:
+        """Path to processing status/result metadata."""
+        return f"{video_id}/outputs/processing_status.json"
 
 
 class MinIOStorage:
@@ -145,10 +181,10 @@ class MinIOStorage:
         Ensure required buckets exist, create if missing
         
         Args:
-            buckets: List of bucket names to ensure. Defaults to ['videos', 'encoded']
+            buckets: List of bucket names to ensure. Defaults to ['videos', 'encoded', 'thumbnails']
         """
         if buckets is None:
-            buckets = ['videos', 'encoded']
+            buckets = ['videos', 'encoded', 'thumbnails']
         
         for bucket in buckets:
             self.create_bucket(bucket)

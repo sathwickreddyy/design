@@ -1,312 +1,323 @@
-# 🎥 Distributed Video Transcoding Engine
+# 🎥 Video Transcoding System - System Design Learning Project
 
-## 🏗 System Architecture
-- **API:** FastAPI (Submits Workflows)
-- **Orchestrator:** Temporal (Durable Execution)
-- **Workers:** Python + FFmpeg (Stateless Compute)
-- **Storage:** Minio (S3-Compatible)
-- **Logging:** ELK Stack (Centralized, Shared)
+> **Purpose**: A production-grade video transcoding pipeline designed as a learning journey for system design interviews. Each component demonstrates a real-world distributed systems pattern.
 
-## 📊 Milestone Tracker
+## 🎯 What You'll Learn
 
-| Phase | Goal | Status | Key Learning |
-| :--- | :--- | :--- | :--- |
-| **M0** | Infra Scaffolding | ✅ Done | Docker-compose for Distributed systems |
-| **M1** | Hello Transcode | ✅ Done | Temporal Workflows & Activity patterns |
-| **M2** | Parallel DAG | ✅ Done | Chunk-based parallel transcoding |
-| **M3** | Failure Injection| 🔘 Todo | Idempotency & Retries (Staff Skill) |
-| **M4** | Observability | ✅ Done | Centralized logging with ELK Stack |
-
-
-## 🛠 Design Decisions
-- **Why Temporal?** To avoid writing complex state-machine logic for retries.
-- **Why S3/Minio?** Decoupling storage from compute; allows workers to scale.
-- **Why Chunk-based?** Parallelism + failure isolation (retry only failed chunks).
+| Concept | Where It's Used | Interview Relevance |
+|---------|-----------------|---------------------|
+| **DAG Workflows** | Temporal orchestration | "Design a video processing pipeline" |
+| **Queue-based Architecture** | Specialized task queues | "How do you handle backpressure?" |
+| **Fan-out/Fan-in** | Parallel chunk transcoding | "How do you scale processing?" |
+| **Graceful Degradation** | Optional thumbnail/chapters | "What if a component fails?" |
+| **Idempotency** | Deterministic outputs | "How do you handle retries?" |
+| **Conditional Processing** | Smart DAG branches | "How do you support different user needs?" |
 
 ---
 
-## 📂 Storage Structure (HLS Streaming)
+## 📚 Learning Path
 
-Single bucket (`videos`) with prefixes for streaming-ready output:
+### Phase 1: Foundation (Start Here)
+1. **[docs/HLS_STREAMING_GUIDE.md](docs/HLS_STREAMING_GUIDE.md)** - Understand HLS format and why we use it
+2. **[docs/TRANSCODING_ARCHITECTURE.md](docs/TRANSCODING_ARCHITECTURE.md)** - Basic transcoding concepts
+
+### Phase 2: Scaling Patterns  
+3. **[docs/FAN_OUT_ARCHITECTURE.md](docs/FAN_OUT_ARCHITECTURE.md)** - Chunked parallel processing
+4. **[docs/VIDEO_SCALING_EXPLAINED.md](docs/VIDEO_SCALING_EXPLAINED.md)** - Why chunks matter for scale
+
+### Phase 3: Advanced Patterns
+5. **[docs/SMART_DAG_ARCHITECTURE.md](docs/SMART_DAG_ARCHITECTURE.md)** - Conditional branching and graceful degradation
+
+### Phase 4: Interview Diagrams
+6. **[docs/diagrams/](docs/diagrams/)** - D2 diagrams for whiteboard explanations
+
+---
+
+## 🏗 Architecture Overview
+
 ```
-videos/
-  {video_id}/
-    source/
-      source.mp4              # Original uploaded video
-      chunks/                 # GOP-aligned source chunks
-        chunk_0000.mp4
-        chunk_0001.mp4
-        ...
-      manifest.json           # Chunk manifest (ordering)
-    outputs/
-      master.m3u8             # 🎯 Master playlist (start here!)
-      720p/
-        playlist.m3u8         # Variant playlist for 720p
-        segments/
-          seg_0000.ts         # HLS segment (MPEG-TS format)
-          seg_0001.ts
-          ...
-      480p/
-        playlist.m3u8
-        segments/
-          seg_*.ts
-      320p/
-        playlist.m3u8
-        segments/
-          seg_*.ts
+User Request + Options
+        │
+        ▼
+   ┌─────────┐
+   │ FastAPI │ ──▶ Accept request, store video, return immediately
+   └────┬────┘
+        │
+        ▼
+   ┌─────────┐
+   │Temporal │ ──▶ Orchestrate workflow, manage state, handle retries
+   └────┬────┘
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                        SMART DAG WORKFLOW                          │
+│                                                                    │
+│  Download ──▶ Metadata ──┬──▶ Thumbnail (if requested)            │
+│                          │                                         │
+│                          ├──▶ Scene Detection (if requested)       │
+│                          │                                         │
+│                          └──▶ Split ──▶ Transcode ──▶ Playlist    │
+│                                        (parallel)                  │
+│                                        (+ watermark if requested)  │
+└────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+   ┌─────────┐
+   │  MinIO  │ ──▶ Store original + encoded + thumbnails + chapters
+   └─────────┘
+        │
+        ▼
+   HLS Streaming Ready (master.m3u8)
 ```
 
-### 🎬 How to Play HLS Streams
+---
+
+## 🎛 Processing Options (API Contract)
+
+```python
+# POST /videos with ProcessingOptions
+{
+    "url": "https://youtube.com/watch?v=...",
+    "options": {
+        # Resolution selection (null = auto from source)
+        "resolutions": ["480p", "720p", "1080p"],
+        
+        # Thumbnail generation
+        "thumbnail": {
+            "mode": "auto",           # auto | timestamp | scene_based
+            "custom_time_seconds": 30  # for timestamp mode
+        },
+        
+        # Watermark overlay
+        "watermark": {
+            "text": "© MyBrand 2024",
+            "position": "bottom_right",
+            "font_size": 24
+        },
+        
+        # Chapter generation
+        "chapters": {
+            "scene_threshold": 0.4,
+            "min_scene_length": 5.0
+        }
+    }
+}
+```
+
+---
+
+## 🔄 Queue Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            TEMPORAL SERVER                               │
+│                                                                          │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
+│  │ video-tasks │    │download-    │    │ metadata-   │                 │
+│  │ (workflows) │    │   queue     │    │   queue     │                 │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                 │
+│                                                                          │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
+│  │ split-queue │    │transcode-   │    │ playlist-   │                 │
+│  │             │    │   queue     │    │   queue     │                 │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                 │
+└─────────┼──────────────────┼──────────────────┼─────────────────────────┘
+          │                  │                  │
+          ▼                  ▼                  ▼
+    ┌───────────┐     ┌───────────┐      ┌───────────┐
+    │ 2-3 pods  │     │ 5-50 pods │      │ 1-2 pods  │
+    │   Split   │     │ Transcode │      │ Playlist  │
+    │  Workers  │     │  Workers  │      │ Workers   │
+    └───────────┘     └───────────┘      └───────────┘
+                           ↑
+                    Heavy compute
+                     Auto-scales
+```
+
+**Why separate queues?** Different scaling profiles. Transcode is CPU-heavy (scale up), playlist is fast (fixed). Prevents head-of-line blocking.
+
+---
+
+## 🐳 Quick Start
+
+### Prerequisites
+- Docker & Docker Compose
+- D2 (optional, for diagram generation): `brew install d2`
+
+### Start the Stack
 
 ```bash
-# Get the master playlist URL
-MINIO_URL="http://localhost:9000/videos/{video_id}/outputs/master.m3u8"
-
-# Play with VLC
-vlc "$MINIO_URL"
-
-# Play with ffplay  
-ffplay "$MINIO_URL"
-
-# In web browser: use hls.js or video.js library
-```
-
----
-
-## 🔄 Workflow Pipeline
-
-```mermaid
-flowchart TD
-    subgraph Input
-        A[📤 Upload Video] --> B[source.mp4]
-    end
-
-    subgraph Orchestration["Temporal Workflow"]
-        B --> C{YouTube URL?}
-        C -->|Yes| D[🌐 Download Activity]
-        C -->|No| E[📊 Metadata Activity]
-        D --> E
-        E --> F[✂️ Split Activity]
-        
-        F --> G[chunk_0]
-        F --> H[chunk_1]
-        F --> I[chunk_N]
-        
-        subgraph Parallel["Parallel Transcode (chunks × resolutions)"]
-            G --> G720[720p .ts] & G480[480p .ts] & G320[320p .ts]
-            H --> H720[720p .ts] & H480[480p .ts] & H320[320p .ts]
-            I --> I720[720p .ts] & I480[480p .ts] & I320[320p .ts]
-        end
-        
-        G720 & H720 & I720 --> P720[📝 playlist.m3u8]
-        G480 & H480 & I480 --> P480[📝 playlist.m3u8]
-        G320 & H320 & I320 --> P320[📝 playlist.m3u8]
-        
-        P720 & P480 & P320 --> M[📋 master.m3u8]
-        
-        M --> CL[🗑️ Cleanup Chunks]
-    end
-
-    subgraph Output["HLS Streaming Ready"]
-        CL --> Z[✅ Adaptive Bitrate Stream]
-    end
-```
-
----
-
-## 🔄 Activity Flow Diagram
-
-```mermaid
-sequenceDiagram
-    participant API as FastAPI
-    participant T as Temporal
-    participant DW as Download Worker
-    participant MW as Metadata Worker
-    participant SW as Split Worker
-    participant TW as Transcode Workers (x4)
-    participant PW as Playlist Worker
-    participant S3 as MinIO
-
-    API->>T: Start VideoWorkflow(video_id, url)
-    
-    T->>DW: download_youtube_video
-    DW->>S3: Upload source.mp4
-    DW-->>T: ✓ Downloaded
-    
-    T->>MW: extract_metadata
-    MW->>S3: Read source.mp4
-    MW-->>T: ✓ {width, height, duration}
-    
-    T->>SW: split_video
-    SW->>S3: Download source.mp4
-    SW->>S3: Upload chunks + manifest
-    SW-->>T: ✓ {chunk_count, chunks[]}
-    
-    par Parallel Transcode (chunks × resolutions)
-        T->>TW: transcode_chunk(0, 720p)
-        T->>TW: transcode_chunk(0, 480p)
-        T->>TW: transcode_chunk(1, 720p)
-        T->>TW: transcode_chunk(1, 480p)
-        Note over TW: ... N chunks × M resolutions
-        TW->>S3: Upload seg_XXXX.ts (HLS segment)
-        TW-->>T: ✓ chunk complete
-    end
-    
-    par Generate HLS Playlists
-        T->>PW: generate_hls_playlist(720p)
-        T->>PW: generate_hls_playlist(480p)
-        PW->>S3: Upload playlist.m3u8
-        PW-->>T: ✓ playlist ready
-    end
-    
-    T->>PW: generate_master_playlist
-    PW->>S3: Upload master.m3u8
-    PW-->>T: ✓ master ready
-    
-    T->>SW: cleanup_source_chunks
-    SW->>S3: Delete chunks
-    
-    T-->>API: ✅ HLS Stream Ready
-```
-
----
-
-## 🐳 Docker Services
-
-| Service | Queue | Replicas | Purpose |
-|---------|-------|----------|---------|
-| `api` | - | 1 | FastAPI server |
-| `workflow-worker` | video-tasks | 1 | Workflow orchestration |
-| `download-worker` | download-queue | 2 | YouTube downloads |
-| `metadata-worker` | metadata-queue | 1 | FFprobe metadata |
-| `split-worker` | split-queue | 1 | Video chunking |
-| `chunk-transcode-worker` | transcode-queue | 4 | Parallel chunk transcoding (.ts) |
-| `playlist-worker` | playlist-queue | 1 | HLS playlist generation |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites: Start the ELK Stack (One-time, Shared Across Projects)
-
-The logging infrastructure is **separate** from this project. Start it once:
-
-```bash
-# Start the shared ELK stack (if not already running)
-cd ~/my-office/system-design-learning/elk-stack
-docker-compose up -d
-
-# Wait ~60 seconds for Elasticsearch to initialize
-curl http://localhost:9200/_cluster/health?pretty
-# Look for "status": "yellow" or "green"
-```
-
-**📖 New to ELK?** Read the complete guide: [`elk-stack/BEGINNER_GUIDE.md`](../elk-stack/BEGINNER_GUIDE.md)
-
-**⚡ Quick Reference:** [`elk-stack/QUICK_START.md`](../elk-stack/QUICK_START.md)
-
----
-
-### Start the YouTube Transcoding Engine
-
-```bash
-cd docker
+cd transcoding-engine-stack
 docker-compose up -d
 
 # Access:
-# - API: http://localhost:8000
+# - API: http://localhost:8000/docs
 # - Temporal UI: http://localhost:8080
 # - MinIO Console: http://localhost:9001 (admin/password123)
-# - Kibana (Logs): http://localhost:5601
 ```
 
-### View Logs in Kibana
+### Upload a Video
 
-1. Open **http://localhost:5601**
-2. Go to **Menu → Stack Management → Index Patterns**
-3. Create pattern: `filebeat-*` with `@timestamp` as time field
-4. Go to **Menu → Analytics → Discover**
-5. Filter: `container.name: youtube-*`
-6. Watch your distributed system in action! 🎬
+```bash
+# Basic transcode (all defaults)
+curl -X POST "http://localhost:8000/videos" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://youtube.com/watch?v=dQw4w9WgXcQ"}'
 
----
-
-## 💡 Why Chunks/GOPs + HLS?
-
-1. **Parallelism**: Split a 2-hour video into 1800 chunks (4s each); workers process in parallel.
-2. **Failure Isolation**: Worker crash loses only one chunk; others continue.
-3. **Faster Recovery**: Requeue only the failed chunk; no wasted work.
-4. **Instant Streaming**: No merge step required! Generate a text playlist and stream immediately.
-5. **Adaptive Bitrate**: Players seamlessly switch between qualities based on network.
-6. **CDN-Friendly**: Small 4MB chunks cache efficiently on CDN edge nodes globally.
-7. **Cost Efficient**: Users only download what they watch (no full file transfer).
-
----
-
-## 🏗️ System Design Evaluation (Load & Concurrency)
-
-This architecture uses the **Competing Consumers Pattern** to decouple traffic spikes from processing capacity.
-
-### 1. Robustness Under Load (The "Flood" Scenario)
-If 1,000 users upload videos simultaneously:
-*   **System State**: The API accepts all requests instantly (async) and creates 1,000 Workflow Executions in Temporal.
-*   **Input Queue**: 1,000 tasks pile up in the `download-queue` or `split-queue`.
-*   **Processing**: The Workers (`split-worker`, `transcode-worker`) pull tasks at their maximum capable rate (e.g., 4 concurrent tasks if there are 4 workers).
-*   **Outcome**: The system **does not crash**. It simply processes the backlog at a constant rate. Throughput remains stable; latency per job increases linearly with queue depth.
-
-### 2. Concurrency Control
-*   **Temporal Queues**: Act as infinite buffers.
-*   **Worker Polling**: Workers only request a new task when they finish the current one. This implements automatic **Backpressure**.
-*   **Isolation**: A crash in one transcoding worker retries only that specific chunk (small unit of work), not the whole video.
-
-### 3. Bottlenecks & Scaling
-*   **CPU**: Transcoding is CPU-bound. Scale `chunk-transcode-worker` replicas to increase throughput.
-*   **Network/IO**: Verify MinIO/S3 bandwidth when hundreds of workers download chunks simultaneously.
-*   **Database**: Temporal's DB handles the state transitions. For extreme scale (>10k workflows/sec), this needs tuning.
-
----
-
-## ☁️ AWS Deployment Guide
-
-To move this system from Docker Compose to a production-grade AWS solution:
-
-### 1. Orchestration (Temporal)
-*   **Option A (Managed):** Use **Temporal Cloud**. Simplest, zero maintenance. Point workers to the cloud namespace.
-*   **Option B (Self-Hosted):** deploy Temporal Cluster on **Amazon EKS** (Kubernetes) or a fleet of EC2 instances. Requires:
-    *   **RDS (PostgreSQL/MySQL)** or **Cassandra** for persistence.
-    *   **Amazon OpenSearch** for visibility (advanced search).
-
-### 2. Compute (Workers)
-*   **Service**: **Amazon ECS (Fargate)** or **EKS**.
-*   **Strategy**: Deploy workers as containers.
-    *   `split-worker`: High Memory instances (RAM for buffering large files).
-    *   `transcode-worker`: **Compute Optimized (c6g/c7g)** instances. Spot Instances save 90% cost here since tasks are idempotent and retriable.
-    *   `merge-worker`: General purpose or Memory optimized (merging involves IO).
-*   **Auto-Scaling**: Configure **KEDA** (Kubernetes) or AWS Auto Scaling to scale worker count based on Temporal Queue Depth.
-
-### 3. Storage
-*   **Service**: **Amazon S3**.
-*   **Migration**: Replace MinIO connection details with AWS IAM Roles (IRSA) and S3 bucket endpoints.
-*   **Lifecycle**: Use S3 Lifecycle Policies to auto-delete `chunks/` after 24 hours to save costs.
-
-### 4. API Layer
-*   **Service**: **AWS App Runner** or **ECS Fargate** behind an **Application Load Balancer (ALB)**.
-*   **Security**: WAF for protection, Cognito for user auth.
-
-### 5. Deployment Diagram
-```mermaid
-graph TD
-    User -->|State/Status| API[AWS App Runner (FastAPI)]
-    User -->|Video Upload| S3[Amazon S3 Bucket]
-    
-    API -->|Start Workflow| T[Temporal Cloud]
-    
-    subgraph "Auto-Scaling Worker Fleet (ECS/EKS)"
-        W1[Split Workers] 
-        W2[Transcode Workers (Spot Instances)]
-        W3[Merge Workers]
-    end
-    
-    T -->|Dispatch Tasks| W1 & W2 & W3
-    W1 & W2 & W3 -->|Read/Write| S3
+# With processing options
+curl -X POST "http://localhost:8000/videos" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://youtube.com/watch?v=dQw4w9WgXcQ",
+    "options": {
+      "resolutions": ["480p", "720p"],
+      "thumbnail": {"mode": "auto"},
+      "watermark": {"text": "© Demo", "position": "bottom_right"}
+    }
+  }'
 ```
+
+### Check Progress
+
+```bash
+# Via API
+curl http://localhost:8000/videos/{video_id}/status
+
+# Via Temporal UI
+open http://localhost:8080
+```
+
+### Play the Stream
+
+```bash
+# VLC
+vlc "http://localhost:9000/videos/{video_id}/outputs/master.m3u8"
+
+# FFplay
+ffplay "http://localhost:9000/videos/{video_id}/outputs/master.m3u8"
+```
+
+---
+
+## 📂 Project Structure
+
+```
+youtube/
+├── main.py                      # FastAPI application
+├── shared/
+│   ├── workflows.py             # Temporal workflows (Smart DAG)
+│   ├── storage.py               # MinIO path helpers
+│   └── router.py                # API routes
+├── worker/
+│   ├── run_worker.py            # Workflow worker
+│   ├── run_download_worker.py   # Download activity worker
+│   ├── run_metadata_worker.py   # Metadata activity worker
+│   ├── run_chunked_worker.py    # Transcode activity worker
+│   └── activities/
+│       ├── download.py          # YouTube download
+│       ├── metadata.py          # FFprobe extraction
+│       ├── chunked_transcode.py # FFmpeg transcode + watermark
+│       ├── thumbnail.py         # Thumbnail generation
+│       └── scene_detection.py   # Scene detection + chapters
+├── docs/
+│   ├── SMART_DAG_ARCHITECTURE.md
+│   ├── HLS_STREAMING_GUIDE.md
+│   └── diagrams/                # D2 diagram sources
+└── transcoding-engine-stack/
+    └── docker-compose.yml       # Full stack deployment
+```
+
+---
+
+## 🎯 Interview Talking Points
+
+### "Walk me through the architecture"
+
+> "When a user uploads a video, the API immediately returns and creates a Temporal workflow. The workflow orchestrates activities across specialized queues - download, metadata extraction, chunking, transcoding, and playlist generation. Each queue scales independently based on workload characteristics."
+
+### "How do you handle failures?"
+
+> "We use Temporal for durable execution - workflow state persists across crashes. Activities are idempotent, so retries are safe. We also separate critical path (transcoding) from enhancement path (thumbnails) - thumbnail failures don't block the video."
+
+### "How does it scale?"
+
+> "We use chunked processing - a 2-hour video becomes ~1800 independent 4-second chunks. These process in parallel across N workers. Adding workers linearly increases throughput. The queue acts as a buffer during traffic spikes."
+
+### "Why not just use a single queue?"
+
+> "Different activities have different resource profiles. Transcoding is CPU-heavy (scale to 50 workers), playlist generation is fast (2 workers). Separate queues prevent head-of-line blocking and allow targeted scaling."
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
+| `MINIO_ENDPOINT` | `localhost:9000` | MinIO/S3 endpoint |
+| `MINIO_ACCESS_KEY` | `admin` | MinIO access key |
+| `MINIO_SECRET_KEY` | `password123` | MinIO secret key |
+
+### Resolution Presets
+
+| Resolution | Width | Height | Bitrate | Use Case |
+|------------|-------|--------|---------|----------|
+| `480p` | 854 | 480 | 1M | Mobile, low bandwidth |
+| `720p` | 1280 | 720 | 2.5M | Standard HD |
+| `1080p` | 1920 | 1080 | 5M | Full HD |
+
+---
+
+## 📊 Generate Architecture Diagrams
+
+```bash
+# Generate SVGs from D2 sources
+d2 docs/diagrams/01-high-level.d2 docs/diagrams/01-high-level.svg
+d2 docs/diagrams/02-design-deep-dive.d2 docs/diagrams/02-design-deep-dive.svg
+d2 docs/diagrams/03-final-architecture.d2 docs/diagrams/03-final-architecture.svg
+
+# Open in browser
+open docs/diagrams/01-high-level.svg
+```
+
+---
+
+## 🛠 Development
+
+### Run Workers Locally (Outside Docker)
+
+```bash
+# Create virtual environment
+python3 -m venv youtube-local-venv
+source youtube-local-venv/bin/activate
+pip install -r requirements.txt
+
+# Start workers in separate terminals
+python -m worker.run_worker
+python -m worker.run_download_worker
+python -m worker.run_metadata_worker
+python -m worker.run_chunked_worker
+```
+
+### Run Tests
+
+```bash
+python load_test.py  # Concurrent upload test
+```
+
+---
+
+## 📖 Further Reading
+
+- [Temporal Documentation](https://docs.temporal.io/)
+- [HLS Specification](https://datatracker.ietf.org/doc/html/rfc8216)
+- [FFmpeg Documentation](https://ffmpeg.org/documentation.html)
+- [System Design Primer](https://github.com/donnemartin/system-design-primer)
+
+---
+
+## 🎓 Credits
+
+Built as a learning project for system design interviews. Demonstrates real-world patterns used by YouTube, Netflix, and other video platforms.
