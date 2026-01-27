@@ -1,0 +1,193 @@
+# Scenario 5: All Features Combined
+# User requests everything: thumbnail + watermark + chapters + custom resolutions
+
+direction: down
+
+title: |md
+  # Scenario 5: Full Smart DAG (All Features)
+  **Request:** All options enabled
+|
+
+start: START {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+stage1: Stage 1\ndownload_youtube_video {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage2: Stage 2\nextract_metadata {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage3: Stage 3\nsplit_video_into_chunks {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+branch_point: BRANCH POINT {
+  shape: diamond
+  style.fill: "#ffd54f"
+  style.stroke: "#f57c00"
+  style.stroke-width: 3
+  
+  label: |md
+    **Conditional Branching**
+    Check all options:
+    - thumbnail? ✅
+    - chapters? ✅
+    - watermark? ✅
+    - resolutions? ["1080p", "720p"]
+  |
+}
+
+# Parallel Enhancement Paths
+parallel: PARALLEL EXECUTION {
+  style.fill: "#f3e5f5"
+  style.stroke: "#9c27b0"
+  style.stroke-width: 2
+  
+  stage4: Stage 4\ngenerate_thumbnail {
+    shape: rectangle
+    style.fill: "#00bcd4"
+    style.stroke-width: 2
+    
+    label: |md
+      mode: scene_based
+      ↓
+      Pick interesting frame
+    |
+  }
+  
+  stage5a: Stage 5a\ndetect_scenes {
+    shape: rectangle
+    style.fill: "#673ab7"
+    style.stroke-width: 2
+    
+    label: |md
+      threshold: 0.3
+      ↓
+      Scene timestamps
+    |
+  }
+  
+  stage5b: Stage 5b\ngenerate_chapter_files {
+    shape: rectangle
+    style.fill: "#673ab7"
+    style.stroke-width: 2
+    
+    label: |md
+      .vtt + .json + .m3u8
+    |
+  }
+  
+  stage5a -> stage5b
+}
+
+stage6: Stage 6\ntranscode_chunk + WATERMARK {
+  shape: rectangle
+  style.fill: "#ff5722"
+  style.stroke: "#d32f2f"
+  style.stroke-width: 3
+  
+  label: |md
+    **Enhanced Transcode**
+    For each chunk × resolution:
+    
+    Resolutions: [1080p, 720p] only
+    
+    + Watermark overlay:
+      text: "© MyBrand 2024"
+      position: bottom_right
+      
+    = Watermarked HLS segments
+  |
+}
+
+stage7: Stage 7\ngenerate_hls_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+stage8: Stage 8\ngenerate_master_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+completion: Stage 9\nVideoCompletionWorkflow {
+  shape: rectangle
+  style.fill: "#4caf50"
+  style.stroke-width: 2
+}
+
+end: END {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+# Flow - Main Path
+start -> stage1
+stage1 -> stage2
+stage2 -> stage3
+stage3 -> branch_point
+
+# Parallel branches
+branch_point -> parallel.stage4: thumbnail branch {
+  style.stroke: "#00bcd4"
+  style.stroke-width: 2
+}
+
+branch_point -> parallel.stage5a: chapters branch {
+  style.stroke: "#673ab7"
+  style.stroke-width: 2
+}
+
+# Parallel converge to stage 6
+parallel.stage4 -> stage6: continues in parallel {
+  style.stroke-dash: 3
+}
+
+parallel.stage5b -> stage6: continues in parallel {
+  style.stroke-dash: 3
+}
+
+branch_point -> stage6: main path {
+  style.stroke: "#ff5722"
+  style.stroke-width: 3
+}
+
+# Critical path continues
+stage6 -> stage7
+stage7 -> stage8
+stage8 -> completion
+completion -> end
+
+# Annotations
+note1: Parallel Enhancement {
+  style.fill: "#f3e5f5"
+  style.font-color: "#6a1b9a"
+}
+
+note2: Critical Path {
+  style.fill: "#ffebee"
+  style.font-color: "#c62828"
+}
+
+note3: |md
+  **Final Output:**
+  ✅ Video: 1080p + 720p with watermark
+  ✅ Thumbnail: scene-based selection
+  ✅ Chapters: VTT, JSON, HLS
+  ✅ Total time: ~same as 1080p+720p alone
+     (enhancements run in parallel)
+| {
+  style.fill: "#e8f5e9"
+}

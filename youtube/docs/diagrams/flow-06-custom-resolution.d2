@@ -1,0 +1,151 @@
+# Scenario 6: Custom Resolutions Only
+# User specifies exact resolutions (e.g., only 1080p)
+
+direction: down
+
+title: |md
+  # Scenario 6: Custom Resolution Selection
+  **Request:** `{url: "...", options: {resolutions: ["1080p"]}}`
+|
+
+start: START {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+stage1: Stage 1\ndownload_youtube_video {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage2: Stage 2\nextract_metadata {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+  
+  label: |md
+    **extract_metadata**
+    source: 1920x1080 (Full HD)
+    duration: 180s
+  |
+}
+
+decision: Check options.resolutions {
+  shape: diamond
+  style.fill: "#fff9c4"
+  style.stroke: "#f57c00"
+  style.stroke-width: 2
+  
+  label: |md
+    options.resolutions?
+    ["1080p"] ✅
+  |
+}
+
+stage3: Stage 3\nsplit_video_into_chunks {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage4_skip: Stage 4\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+stage5_skip: Stage 5\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+stage6: Stage 6\ntranscode_chunk @ 1080p ONLY {
+  shape: rectangle
+  style.fill: "#ff9800"
+  style.stroke: "#e64a19"
+  style.stroke-width: 3
+  
+  label: |md
+    **Targeted Transcode**
+    
+    Only process: 1080p
+    Skip: 720p, 480p, 320p
+    
+    Faster processing:
+    - Fewer chunks to encode
+    - Less storage used
+    - Quicker completion
+  |
+}
+
+stage7: Stage 7\ngenerate_hls_playlist @ 1080p {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+stage8: Stage 8\ngenerate_master_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+  
+  label: |md
+    **master.m3u8**
+    Only one variant:
+    #EXT-X-STREAM-INF:BANDWIDTH=5000000
+    1080p/playlist.m3u8
+  |
+}
+
+completion: Stage 9\nVideoCompletionWorkflow {
+  shape: rectangle
+  style.fill: "#4caf50"
+  style.stroke-width: 2
+}
+
+end: END {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+# Flow
+start -> stage1
+stage1 -> stage2
+stage2 -> decision
+
+decision -> stage3: Use ["1080p"] {
+  style.stroke: "#ff9800"
+  style.stroke-width: 2
+}
+
+stage3 -> stage4_skip
+stage3 -> stage5_skip
+stage3 -> stage6
+stage6 -> stage7
+stage7 -> stage8
+stage8 -> completion
+completion -> end
+
+# Annotations
+note1: |md
+  **Smart Resolution Selection**
+  
+  Default: Auto-detect from source
+  Generate 720p, 480p, 320p
+  
+  Custom: Only generate requested
+  Faster, less storage
+| {
+  style.fill: "#fff9c4"
+}
+
+note2: |md
+  **Use Cases:**
+  - Premium content (1080p only)
+  - Mobile-only app (480p only)
+  - Bandwidth tests (single resolution)
+| {
+  style.fill: "#e3f2fd"
+}

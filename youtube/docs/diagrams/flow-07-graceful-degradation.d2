@@ -1,0 +1,184 @@
+# Scenario 7: Graceful Degradation (Thumbnail Fails)
+# Shows how enhancement failures don't block the video
+
+direction: down
+
+title: |md
+  # Scenario 7: Graceful Degradation
+  **What if thumbnail generation fails?**
+|
+
+start: START {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+stage1: Stage 1\ndownload_youtube_video {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage2: Stage 2\nextract_metadata {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage3: Stage 3\nsplit_video_into_chunks {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage4_fail: Stage 4\ngenerate_thumbnail ❌ {
+  shape: rectangle
+  style.fill: "#ff5252"
+  style.stroke: "#d32f2f"
+  style.stroke-width: 3
+  
+  label: |md
+    **FAILURE SCENARIO**
+    - Invalid timestamp: 99999s
+    - Video only 180s long
+    - FFmpeg error
+    
+    try/except catches error
+    ↓
+    workflow.logger.warning()
+    ↓
+    thumbnail_url = None
+    ↓
+    Continue anyway ✅
+  |
+}
+
+stage5_skip: Stage 5\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+recovery: Error Handler {
+  shape: hexagon
+  style.fill: "#fff9c4"
+  style.stroke: "#fbc02d"
+  style.stroke-width: 2
+  
+  label: |md
+    **Catch ActivityError**
+    Log warning
+    Set result = None
+    Continue to Stage 6
+  |
+}
+
+stage6: Stage 6\ntranscode_chunk ✅ {
+  shape: rectangle
+  style.fill: "#66bb6a"
+  style.stroke: "#43a047"
+  style.stroke-width: 2
+  
+  label: |md
+    Critical path unaffected
+    Video transcodes normally
+  |
+}
+
+stage7: Stage 7\ngenerate_hls_playlist ✅ {
+  shape: rectangle
+  style.fill: "#66bb6a"
+  style.stroke: "#43a047"
+  style.stroke-width: 2
+}
+
+stage8: Stage 8\ngenerate_master_playlist ✅ {
+  shape: rectangle
+  style.fill: "#66bb6a"
+  style.stroke: "#43a047"
+  style.stroke-width: 2
+}
+
+completion: Stage 9\nVideoCompletionWorkflow {
+  shape: rectangle
+  style.fill: "#4caf50"
+  style.stroke-width: 2
+  
+  label: |md
+    DB record:
+    - video_url: ✅
+    - thumbnail_url: null
+    - status: completed
+  |
+}
+
+end: END ✅\nVIDEO PLAYABLE {
+  shape: oval
+  style.fill: "#4caf50"
+  style.stroke: "#2e7d32"
+  style.stroke-width: 3
+}
+
+# Flow
+start -> stage1
+stage1 -> stage2
+stage2 -> stage3
+stage3 -> stage4_fail
+stage4_fail -> recovery: Exception thrown {
+  style.stroke: "#ff5252"
+  style.stroke-width: 2
+}
+recovery -> stage6: Continue execution {
+  style.stroke: "#fbc02d"
+  style.stroke-dash: 3
+}
+
+stage3 -> stage5_skip
+stage3 -> stage6: Main path continues {
+  style.stroke: "#43a047"
+  style.stroke-width: 3
+}
+
+stage6 -> stage7
+stage7 -> stage8
+stage8 -> completion
+completion -> end
+
+# Annotations
+critical: |md
+  **Critical Path**
+  Must succeed for video
+| {
+  style.fill: "#ffebee"
+  style.font-color: "#c62828"
+}
+
+enhancement: |md
+  **Enhancement Path**
+  Can fail gracefully
+| {
+  style.fill: "#e1f5fe"
+  style.font-color: "#01579b"
+}
+
+result: |md
+  **Final State:**
+  ✅ Video plays perfectly
+  ⚠️ No thumbnail (acceptable)
+  📊 Logged for monitoring
+  
+  **Code Pattern:**
+  ```python
+  thumbnail_url = None
+  if options.thumbnail:
+      try:
+          thumbnail_url = await execute_activity(
+              generate_thumbnail, ...
+          )
+      except ActivityError:
+          logger.warning("Thumbnail failed")
+          # Don't re-raise - continue
+  ```
+| {
+  style.fill: "#f1f8e9"
+}

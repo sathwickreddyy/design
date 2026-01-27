@@ -1,0 +1,108 @@
+# Scenario 1: Basic Transcode (No Options)
+# User uploads video without any ProcessingOptions
+
+direction: down
+
+title: |md
+  # Scenario 1: Basic Transcode
+  **Request:** `{url: "...", options: null}`
+|
+
+start: START {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+stage1: Stage 1\ndownload_youtube_video {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage2: Stage 2\nextract_metadata {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage3: Stage 3\nsplit_video_into_chunks {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage4_skip: Stage 4 (Thumbnail)\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+stage5_skip: Stage 5 (Chapters)\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+stage6: Stage 6\ntranscode_chunk (parallel) {
+  shape: rectangle
+  style.fill: "#ff9800"
+  style.stroke: "#e64a19"
+  style.stroke-width: 3
+  
+  label: |md
+    **Per chunk × resolution:**
+    - chunk_0 @ 720p
+    - chunk_0 @ 480p
+    - chunk_0 @ 320p
+    - chunk_1 @ 720p
+    - ... (parallel)
+  |
+}
+
+stage7: Stage 7\ngenerate_hls_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+stage8: Stage 8\ngenerate_master_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+completion: Stage 9\nVideoCompletionWorkflow {
+  shape: rectangle
+  style.fill: "#4caf50"
+  style.stroke-width: 2
+}
+
+end: END {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+# Flow
+start -> stage1: "Video URL"
+stage1 -> stage2: "source.mp4"
+stage2 -> stage3: "metadata"
+stage3 -> stage4_skip: "options null"
+stage3 -> stage5_skip: "options null"
+stage3 -> stage6: "chunks"
+stage6 -> stage7: "transcoded chunks"
+stage7 -> stage8: "variant playlists"
+stage8 -> completion: "master.m3u8"
+completion -> end: "DB updated"
+
+# Annotations
+note1: |md
+  **Result:**
+  - 3 resolutions (720p, 480p, 320p)
+  - No thumbnail
+  - No chapters
+  - No watermark
+| {
+  style.fill: "#fff9c4"
+}
+
+note2: Critical Path Only

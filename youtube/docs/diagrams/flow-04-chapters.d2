@@ -1,0 +1,151 @@
+# Scenario 4: With Chapters Only
+# User requests scene detection and chapter generation
+
+direction: down
+
+title: |md
+  # Scenario 4: With Chapters
+  **Request:** `{url: "...", options: {chapters: {scene_threshold: 0.4}}}`
+|
+
+start: START {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+stage1: Stage 1\ndownload_youtube_video {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage2: Stage 2\nextract_metadata {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage3: Stage 3\nsplit_video_into_chunks {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage4_skip: Stage 4 (Thumbnail)\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+decision: Check options.chapters? {
+  shape: diamond
+  style.fill: "#fff9c4"
+  style.stroke: "#f57c00"
+  style.stroke-width: 2
+}
+
+stage5a: Stage 5a\ndetect_scenes {
+  shape: rectangle
+  style.fill: "#673ab7"
+  style.stroke: "#512da8"
+  style.stroke-width: 2
+  
+  label: |md
+    **detect_scenes**
+    - FFmpeg scene filter
+    - threshold: 0.4
+    - min_length: 5.0s
+    ↓
+    Returns: [(0.0, "Scene 1"), (12.5, "Scene 2"), ...]
+  |
+}
+
+stage5b: Stage 5b\ngenerate_chapter_files {
+  shape: rectangle
+  style.fill: "#673ab7"
+  style.stroke: "#512da8"
+  style.stroke-width: 2
+  
+  label: |md
+    **generate_chapter_files**
+    Creates:
+    1. chapters.vtt (WebVTT)
+    2. chapters.json (API)
+    3. chapters.m3u8 (HLS tags)
+  |
+}
+
+stage6: Stage 6\ntranscode_chunk (parallel) {
+  shape: rectangle
+  style.fill: "#ff9800"
+  style.stroke: "#e64a19"
+  style.stroke-width: 3
+}
+
+stage7: Stage 7\ngenerate_hls_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+stage8: Stage 8\ngenerate_master_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+completion: Stage 9\nVideoCompletionWorkflow {
+  shape: rectangle
+  style.fill: "#4caf50"
+  style.stroke-width: 2
+}
+
+end: END {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+# Flow
+start -> stage1
+stage1 -> stage2
+stage2 -> stage3
+stage3 -> stage4_skip
+stage3 -> decision
+
+decision -> stage5a: YES {
+  style.stroke: "#673ab7"
+  style.stroke-width: 2
+}
+
+stage5a -> stage5b: scene timestamps
+
+stage5b -> stage6: Runs in parallel {
+  style.stroke: "#673ab7"
+  style.stroke-dash: 3
+}
+
+stage3 -> stage6: Main path continues
+
+stage6 -> stage7
+stage7 -> stage8
+stage8 -> completion
+completion -> end
+
+# Annotations
+note1: |md
+  **Enhancement Path**
+  Scene detection runs in parallel
+  Failure does NOT block video
+| {
+  style.fill: "#ede7f6"
+}
+
+note2: |md
+  **Result:**
+  - chapters.vtt (YouTube-style)
+  - chapters.json (API responses)
+  - chapters.m3u8 (HLS metadata)
+  - Video plays with chapter markers
+| {
+  style.fill: "#fff9c4"
+}

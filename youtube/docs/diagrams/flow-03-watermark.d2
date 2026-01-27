@@ -1,0 +1,129 @@
+# Scenario 3: With Watermark Only
+# User requests watermark on video
+
+direction: down
+
+title: |md
+  # Scenario 3: With Watermark
+  **Request:** `{url: "...", options: {watermark: {text: "© Brand", position: "bottom_right"}}}`
+|
+
+start: START {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+stage1: Stage 1\ndownload_youtube_video {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage2: Stage 2\nextract_metadata {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage3: Stage 3\nsplit_video_into_chunks {
+  shape: rectangle
+  style.fill: "#2196f3"
+  style.stroke-width: 2
+}
+
+stage4_skip: Stage 4 (Thumbnail)\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+stage5_skip: Stage 5 (Chapters)\nSKIPPED {
+  shape: rectangle
+  style.fill: "#e0e0e0"
+  style.stroke-dash: 3
+}
+
+decision: Check options.watermark? {
+  shape: diamond
+  style.fill: "#fff9c4"
+  style.stroke: "#f57c00"
+  style.stroke-width: 2
+}
+
+stage6: Stage 6\ntranscode_chunk + WATERMARK {
+  shape: rectangle
+  style.fill: "#ff5722"
+  style.stroke: "#d32f2f"
+  style.stroke-width: 3
+  
+  label: |md
+    **transcode_chunk (enhanced)**
+    For each chunk:
+    1. Transcode to resolution
+    2. Apply drawtext filter:
+       - text: "© Brand"
+       - position: bottom_right
+       - font_size: 24
+       - opacity: 0.7
+    3. Output with watermark
+  |
+}
+
+stage7: Stage 7\ngenerate_hls_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+stage8: Stage 8\ngenerate_master_playlist {
+  shape: rectangle
+  style.fill: "#9c27b0"
+  style.stroke-width: 2
+}
+
+completion: Stage 9\nVideoCompletionWorkflow {
+  shape: rectangle
+  style.fill: "#4caf50"
+  style.stroke-width: 2
+}
+
+end: END {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+# Flow
+start -> stage1
+stage1 -> stage2
+stage2 -> stage3
+stage3 -> stage4_skip
+stage3 -> stage5_skip
+stage3 -> decision
+
+decision -> stage6: YES\nPass watermark params {
+  style.stroke: "#ff5722"
+  style.stroke-width: 2
+}
+
+stage6 -> stage7
+stage7 -> stage8
+stage8 -> completion
+completion -> end
+
+# Annotations
+note1: |md
+  **Watermark Applied During Transcode**
+  Not a separate stage - embedded in Stage 6
+  FFmpeg drawtext filter adds text overlay
+| {
+  style.fill: "#ffebee"
+}
+
+note2: |md
+  **Result:**
+  - All video segments have watermark
+  - Position: bottom_right corner
+  - Appears on all resolutions
+| {
+  style.fill: "#fff9c4"
+}
