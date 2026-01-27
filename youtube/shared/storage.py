@@ -202,14 +202,46 @@ class MinIOStorage:
         try:
             self.s3_client.create_bucket(Bucket=bucket_name)
             logger.info(f"Bucket '{bucket_name}' created successfully")
+            # Set public read policy for videos bucket
+            self.set_bucket_public_read_policy(bucket_name)
             return True
         except ClientError as e:
             if e.response['Error']['Code'] == 'BucketAlreadyOwnedByYou':
                 logger.info(f"Bucket '{bucket_name}' already exists")
+                # Ensure policy is set even for existing buckets
+                self.set_bucket_public_read_policy(bucket_name)
                 return False
             else:
                 logger.error(f"Error creating bucket: {e}")
                 raise
+    
+    def set_bucket_public_read_policy(self, bucket_name: str) -> None:
+        """
+        Set bucket policy to allow public read access (needed for HLS streaming)
+        
+        Args:
+            bucket_name: Name of the bucket to set policy for
+        """
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"AWS": "*"},
+                    "Action": ["s3:GetObject"],
+                    "Resource": [f"arn:aws:s3:::{bucket_name}/*"]
+                }
+            ]
+        }
+        
+        try:
+            self.s3_client.put_bucket_policy(
+                Bucket=bucket_name,
+                Policy=json.dumps(policy)
+            )
+            logger.info(f"Public read policy set for bucket '{bucket_name}'")
+        except ClientError as e:
+            logger.warning(f"Could not set bucket policy for '{bucket_name}': {e}")
     
     def _generate_video_id(self) -> str:
         """
