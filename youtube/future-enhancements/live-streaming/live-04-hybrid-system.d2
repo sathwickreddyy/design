@@ -1,0 +1,343 @@
+# Adding Live Streaming to Your Current System
+
+direction: down
+
+title: |md
+  # Hybrid System: VOD + Live Streaming
+  How to extend your current architecture
+|
+
+# ═══════════════════════════════════════════════════════════════
+# SHARED COMPONENTS (Current System)
+# ═══════════════════════════════════════════════════════════════
+
+shared: Shared Infrastructure {
+  style.fill: "#e8f5e9"
+  
+  api: FastAPI Gateway {
+    shape: rectangle
+    style.fill: "#66bb6a"
+    
+    label: |md
+      NEW ROUTES:
+      POST /live/start
+      POST /live/stop
+      GET /live/streams
+    |
+  }
+  
+  storage: MinIO/S3 Storage {
+    shape: cylinder
+    style.fill: "#4caf50"
+    
+    label: |md
+      VOD: Permanent storage
+      Live: Temporary (30s window)
+      Archives: Optional recordings
+    |
+  }
+  
+  cdn: CDN Layer {
+    shape: cloud
+    style.fill: "#81c784"
+    
+    label: |md
+      Serves both VOD and Live
+      Different caching strategies
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# VOD PATH (Existing)
+# ═══════════════════════════════════════════════════════════════
+
+vod_path: VOD Path (Existing) {
+  style.fill: "#e3f2fd"
+  style.stroke: "#1976d2"
+  style.stroke-width: 2
+  
+  upload: User Upload {
+    shape: rectangle
+    style.fill: "#90caf9"
+  }
+  
+  temporal: Temporal Workflow {
+    shape: rectangle
+    style.fill: "#42a5f5"
+  }
+  
+  workers: Worker Pool {
+    shape: rectangle
+    style.fill: "#2196f3"
+  }
+  
+  upload -> temporal: "Complete file"
+  temporal -> workers: "Batch process"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# LIVE PATH (New)
+# ═══════════════════════════════════════════════════════════════
+
+live_path: Live Path (NEW) {
+  style.fill: "#ffebee"
+  style.stroke: "#c62828"
+  style.stroke-width: 2
+  
+  broadcaster: Broadcaster {
+    shape: person
+    style.fill: "#ef5350"
+  }
+  
+  ingest: RTMP Ingest {
+    shape: rectangle
+    style.fill: "#e53935"
+    style.stroke-width: 2
+    
+    label: |md
+      NEW SERVICE
+      nginx-rtmp or
+      Wowza or
+      MediaLive
+    |
+  }
+  
+  live_transcoder: Live Transcoder {
+    shape: rectangle
+    style.fill: "#d32f2f"
+    style.stroke-width: 2
+    
+    label: |md
+      NEW SERVICE
+      Different from VOD workers
+      Real-time constraints
+    |
+  }
+  
+  origin: Origin Server {
+    shape: rectangle
+    style.fill: "#c62828"
+    style.stroke-width: 2
+    
+    label: |md
+      NEW SERVICE
+      Dynamic HLS playlists
+    |
+  }
+  
+  recorder: Stream Recorder\n(Optional) {
+    shape: rectangle
+    style.fill: "#b71c1c"
+    style.stroke-dash: 3
+    
+    label: |md
+      Save stream to VOD
+      After live ends,
+      becomes regular video
+    |
+  }
+  
+  broadcaster -> ingest: "RTMP stream"
+  ingest -> live_transcoder: "Segments"
+  live_transcoder -> origin: "Multi-quality"
+  origin -> recorder: "Optional: Record"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CONNECTIONS TO SHARED
+# ═══════════════════════════════════════════════════════════════
+
+shared.api -> vod_path.temporal: "POST /videos"
+shared.api -> live_path.ingest: "POST /live/start"
+
+vod_path.workers -> shared.storage: "Write VOD"
+live_path.origin -> shared.storage: "Write live segments"
+live_path.recorder -> shared.storage: "Write archives"
+
+shared.storage -> shared.cdn: "Origin pull"
+
+# ═══════════════════════════════════════════════════════════════
+# IMPLEMENTATION PLAN
+# ═══════════════════════════════════════════════════════════════
+
+plan: Implementation Phases {
+  style.fill: "#fff9c4"
+  
+  phase1: Phase 1\nIngest Server {
+    shape: rectangle
+    style.fill: "#ffd54f"
+    
+    label: |md
+      **Week 1-2:**
+      - Deploy nginx-rtmp
+      - Configure RTMP endpoint
+      - Test OBS connection
+      - Add stream authentication
+    |
+  }
+  
+  phase2: Phase 2\nLive Transcoder {
+    shape: rectangle
+    style.fill: "#ffca28"
+    
+    label: |md
+      **Week 3-4:**
+      - Build live transcode worker
+      - Real-time FFmpeg presets
+      - Handle segmentation
+      - Monitor latency
+    |
+  }
+  
+  phase3: Phase 3\nOrigin Server {
+    shape: rectangle
+    style.fill: "#ffc107"
+    
+    label: |md
+      **Week 5-6:**
+      - Build HLS packager
+      - Dynamic playlist generation
+      - Segment cleanup (sliding window)
+      - CDN integration
+    |
+  }
+  
+  phase4: Phase 4\nRecording {
+    shape: rectangle
+    style.fill: "#ffb300"
+    
+    label: |md
+      **Week 7-8:**
+      - Archive live streams
+      - Convert to VOD after end
+      - Trigger VOD workflow
+      - User can watch replay
+    |
+  }
+  
+  phase1 -> phase2
+  phase2 -> phase3
+  phase3 -> phase4
+}
+
+# ═══════════════════════════════════════════════════════════════
+# NEW COMPONENTS DETAIL
+# ═══════════════════════════════════════════════════════════════
+
+components: New Components Needed {
+  style.fill: "#f3e5f5"
+  
+  comp1: nginx-rtmp-module {
+    shape: rectangle
+    style.fill: "#ce93d8"
+    
+    label: |md
+      **Purpose:** Accept RTMP streams
+      **Config:** rtmp.conf
+      **Port:** 1935
+      **Scale:** 1 per region
+    |
+  }
+  
+  comp2: Live Transcoder Service {
+    shape: rectangle
+    style.fill: "#ba68c8"
+    
+    label: |md
+      **Language:** Python + FFmpeg
+      **Queue:** live-transcode-queue
+      **Scaling:** Per active stream
+      **Preset:** ultrafast, zerolatency
+    |
+  }
+  
+  comp3: Origin Service {
+    shape: rectangle
+    style.fill: "#ab47bc"
+    
+    label: |md
+      **Purpose:** Serve HLS
+      **Tech:** FastAPI + asyncio
+      **Storage:** Redis (segment metadata)
+      **Cleanup:** Delete segments > 30s
+    |
+  }
+  
+  comp4: Stream State DB {
+    shape: cylinder
+    style.fill: "#9c27b0"
+    
+    label: |md
+      **Tech:** Redis or PostgreSQL
+      **Data:**
+      - Active streams
+      - Viewer counts
+      - Stream health
+      - Recording status
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CODE CHANGES NEEDED
+# ═══════════════════════════════════════════════════════════════
+
+code_changes: Code Changes in Current System {
+  style.fill: "#e0f2f1"
+  
+  content: |md
+    **1. New Routes (main.py):**
+    ```python
+    @app.post("/live/start")
+    async def start_live_stream(stream_key: str):
+        # Allocate stream_id
+        # Start live transcoder workers
+        # Return RTMP URL
+    
+    @app.post("/live/stop")
+    async def stop_live_stream(stream_id: str):
+        # Stop transcoding
+        # Trigger archive (optional)
+        # Cleanup temporary segments
+    ```
+    
+    **2. New Activities:**
+    - live_transcode_segment()
+    - generate_live_playlist()
+    - cleanup_old_segments()
+    
+    **3. New Workflow:**
+    - LiveStreamWorkflow (different from VOD)
+    - Runs continuously while stream active
+    - Monitors for stream end
+  |
+}
+
+# ═══════════════════════════════════════════════════════════════
+# COST COMPARISON
+# ═══════════════════════════════════════════════════════════════
+
+cost: Cost Implications {
+  style.fill: "#fff3e0"
+  
+  content: |md
+    **VOD Cost Model:**
+    $X per video processed (one-time)
+    Storage: $Y per GB/month
+    
+    **Live Cost Model:**
+    $Z per minute streaming (continuous)
+    Transcoding: $A per stream per minute
+    CDN: $B per GB delivered
+    
+    **Example:**
+    1 hour live stream = $5-10
+    1000 concurrent viewers = $50-100/hour
+    
+    **Why More Expensive?**
+    - Must process in real-time (can't batch)
+    - Can't use spot instances (stateful)
+    - Higher CDN costs (viewers watch together)
+  |
+}

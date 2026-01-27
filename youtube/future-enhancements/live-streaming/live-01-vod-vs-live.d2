@@ -1,0 +1,181 @@
+# VOD vs Live Streaming - Architecture Comparison
+
+direction: right
+
+title: |md
+  # Architecture Comparison: VOD vs Live Streaming
+  Understanding the fundamental differences
+|
+
+# ═══════════════════════════════════════════════════════════════
+# VOD (Current System)
+# ═══════════════════════════════════════════════════════════════
+
+vod: VOD Architecture {
+  style.fill: "#e3f2fd"
+  
+  user: User {
+    shape: person
+  }
+  
+  upload: Upload\nComplete File {
+    shape: rectangle
+    style.fill: "#90caf9"
+  }
+  
+  storage: MinIO Storage {
+    shape: cylinder
+    style.fill: "#64b5f6"
+  }
+  
+  temporal: Temporal\n(Batch Process) {
+    shape: rectangle
+    style.fill: "#42a5f5"
+  }
+  
+  workers: Worker Pool\n(Parallel) {
+    shape: rectangle
+    style.fill: "#2196f3"
+    
+    label: |md
+      Process all chunks
+      No time pressure
+      Can retry
+    |
+  }
+  
+  output: Static HLS\nPlaylist {
+    shape: rectangle
+    style.fill: "#1976d2"
+  }
+  
+  viewer: Viewer {
+    shape: person
+  }
+  
+  # Flow
+  user -> upload: "POST /videos"
+  upload -> storage: "source.mp4"
+  storage -> temporal: "Trigger workflow"
+  temporal -> workers: "Dispatch chunks"
+  workers -> output: "Transcoded segments"
+  output -> viewer: "Watch anytime"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Live Streaming (New System)
+# ═══════════════════════════════════════════════════════════════
+
+live: Live Streaming Architecture {
+  style.fill: "#ffebee"
+  
+  broadcaster: Broadcaster {
+    shape: person
+    style.fill: "#ef5350"
+  }
+  
+  encoder: OBS/FFmpeg\nEncoder {
+    shape: rectangle
+    style.fill: "#f44336"
+  }
+  
+  ingest: RTMP Ingest\nServer {
+    shape: rectangle
+    style.fill: "#e53935"
+    style.stroke-width: 2
+    
+    label: |md
+      NEW COMPONENT
+      Accept RTMP stream
+      Buffer segments
+    |
+  }
+  
+  transcoder: Live Transcoder {
+    shape: rectangle
+    style.fill: "#d32f2f"
+    style.stroke-width: 2
+    
+    label: |md
+      Must finish < 4s
+      Real-time preset
+      Can't retry
+    |
+  }
+  
+  origin: Origin Server {
+    shape: rectangle
+    style.fill: "#c62828"
+    style.stroke-width: 2
+    
+    label: |md
+      NEW COMPONENT
+      Dynamic playlist
+      Updates every 4s
+    |
+  }
+  
+  cdn: CDN Edge {
+    shape: cloud
+    style.fill: "#ffcdd2"
+  }
+  
+  viewers: Viewers\n(Concurrent) {
+    shape: person
+    style.fill: "#ef5350"
+  }
+  
+  # Flow
+  broadcaster -> encoder: "Camera feed"
+  encoder -> ingest: "RTMP push\n(continuous)"
+  ingest -> transcoder: "Segment every 4s"
+  transcoder -> origin: "Multi-quality\n(real-time)"
+  origin -> cdn: "HLS segments"
+  cdn -> viewers: "Watch live\n(5-15s delay)"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Key Differences
+# ═══════════════════════════════════════════════════════════════
+
+differences: Key Differences {
+  style.fill: "#fff9c4"
+  
+  timing: |md
+    **Timing:**
+    VOD: Process then serve
+    Live: Serve while processing
+  |
+  
+  input: |md
+    **Input:**
+    VOD: Complete file (known size)
+    Live: Infinite stream
+  |
+  
+  storage: |md
+    **Storage:**
+    VOD: Permanent
+    Live: Sliding window
+  |
+  
+  scaling: |md
+    **Scaling:**
+    VOD: Worker count
+    Live: Stream count
+  |
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Annotations
+# ═══════════════════════════════════════════════════════════════
+
+vod_note: VOD Optimized for Quality {
+  style.fill: "#e3f2fd"
+  style.font-color: "#1565c0"
+}
+
+live_note: Live Optimized for Speed {
+  style.fill: "#ffebee"
+  style.font-color: "#c62828"
+}

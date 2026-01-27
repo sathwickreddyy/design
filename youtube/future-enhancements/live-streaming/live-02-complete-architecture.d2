@@ -1,0 +1,307 @@
+# Complete Live Streaming Architecture
+
+direction: down
+
+title: |md
+  # Complete Live Streaming Architecture
+  From camera to viewer in real-time
+|
+
+# ═══════════════════════════════════════════════════════════════
+# BROADCASTER SIDE
+# ═══════════════════════════════════════════════════════════════
+
+broadcaster: Broadcaster Setup {
+  style.fill: "#e8f5e9"
+  
+  camera: Camera/Screen {
+    shape: rectangle
+    style.fill: "#81c784"
+  }
+  
+  obs: OBS Studio {
+    shape: rectangle
+    style.fill: "#66bb6a"
+    
+    label: |md
+      Capture video
+      Encode H.264
+      Push via RTMP
+    |
+  }
+  
+  settings: Stream Settings {
+    shape: rectangle
+    style.fill: "#4caf50"
+    
+    label: |md
+      Resolution: 1080p
+      Bitrate: 4 Mbps
+      FPS: 30
+      Keyframe: 2s
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# INGEST LAYER
+# ═══════════════════════════════════════════════════════════════
+
+ingest: Ingest Layer {
+  style.fill: "#fff3e0"
+  
+  load_balancer: Load Balancer {
+    shape: rectangle
+    style.fill: "#ffb74d"
+  }
+  
+  ingest_servers: RTMP Ingest Servers {
+    style.fill: "#ffe0b2"
+    
+    server1: nginx-rtmp\nServer 1 {
+      shape: rectangle
+      style.fill: "#ff9800"
+    }
+    
+    server2: nginx-rtmp\nServer 2 {
+      shape: rectangle
+      style.fill: "#ff9800"
+    }
+    
+    server3: nginx-rtmp\nServer N {
+      shape: rectangle
+      style.fill: "#ff9800"
+    }
+  }
+  
+  state_manager: Stream State\nManager {
+    shape: cylinder
+    style.fill: "#fb8c00"
+    
+    label: |md
+      Active streams
+      Metadata
+      Health checks
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PROCESSING LAYER
+# ═══════════════════════════════════════════════════════════════
+
+processing: Processing Layer {
+  style.fill: "#f3e5f5"
+  
+  segmenter: Segmenter {
+    shape: rectangle
+    style.fill: "#ba68c8"
+    
+    label: |md
+      Split stream into
+      4-second segments
+    |
+  }
+  
+  transcoders: Live Transcoders {
+    style.fill: "#e1bee7"
+    
+    tc_1080: 1080p Transcoder {
+      shape: rectangle
+      style.fill: "#9c27b0"
+    }
+    
+    tc_720: 720p Transcoder {
+      shape: rectangle
+      style.fill: "#9c27b0"
+    }
+    
+    tc_480: 480p Transcoder {
+      shape: rectangle
+      style.fill: "#9c27b0"
+    }
+  }
+  
+  packager: HLS Packager {
+    shape: rectangle
+    style.fill: "#8e24aa"
+    
+    label: |md
+      Create .ts segments
+      Update playlists
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# ORIGIN & STORAGE
+# ═══════════════════════════════════════════════════════════════
+
+origin: Origin Layer {
+  style.fill: "#e1f5fe"
+  
+  origin_server: Origin Server {
+    shape: rectangle
+    style.fill: "#29b6f6"
+    style.stroke-width: 2
+    
+    label: |md
+      Serve HLS playlists
+      Manifest generation
+      Segment delivery
+    |
+  }
+  
+  temp_storage: Temporary Storage\n(Sliding Window) {
+    shape: cylinder
+    style.fill: "#03a9f4"
+    
+    label: |md
+      Keep last 30s
+      Delete old segments
+      Rolling buffer
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# DISTRIBUTION LAYER
+# ═══════════════════════════════════════════════════════════════
+
+distribution: Distribution Layer {
+  style.fill: "#fff8e1"
+  
+  cdn: CDN (CloudFront) {
+    shape: cloud
+    style.fill: "#ffd54f"
+    style.stroke-width: 2
+    
+    label: |md
+      Edge caching
+      Geographic distribution
+      Low latency delivery
+    |
+  }
+  
+  edges: Edge Locations {
+    style.fill: "#fff9c4"
+    
+    edge_us: US East {
+      shape: rectangle
+      style.fill: "#fbc02d"
+    }
+    
+    edge_eu: EU West {
+      shape: rectangle
+      style.fill: "#fbc02d"
+    }
+    
+    edge_asia: Asia Pacific {
+      shape: rectangle
+      style.fill: "#fbc02d"
+    }
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# VIEWER SIDE
+# ═══════════════════════════════════════════════════════════════
+
+viewers: Viewer Side {
+  style.fill: "#e8f5e9"
+  
+  viewer1: Viewer 1 {
+    shape: person
+    style.fill: "#66bb6a"
+  }
+  
+  viewer2: Viewer 2 {
+    shape: person
+    style.fill: "#66bb6a"
+  }
+  
+  viewer3: Viewer N {
+    shape: person
+    style.fill: "#66bb6a"
+  }
+  
+  player: HLS Video Player {
+    shape: rectangle
+    style.fill: "#4caf50"
+    
+    label: |md
+      Fetch master.m3u8
+      Poll for updates
+      Adaptive bitrate
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CONNECTIONS
+# ═══════════════════════════════════════════════════════════════
+
+# Broadcaster to Ingest
+broadcaster.obs -> ingest.load_balancer: "RTMP push\nrtmp://ingest.example.com/live/stream_123"
+
+ingest.load_balancer -> ingest.ingest_servers.server1: "Route to\navailable server"
+
+ingest.ingest_servers.server1 -> ingest.state_manager: "Register stream"
+
+# Ingest to Processing
+ingest.ingest_servers.server1 -> processing.segmenter: "Raw H.264 stream"
+
+processing.segmenter -> processing.transcoders.tc_1080: "Segment 0"
+processing.segmenter -> processing.transcoders.tc_720: "Segment 0"
+processing.segmenter -> processing.transcoders.tc_480: "Segment 0"
+
+# Processing to Origin
+processing.transcoders.tc_1080 -> processing.packager: "Transcoded"
+processing.transcoders.tc_720 -> processing.packager: "Transcoded"
+processing.transcoders.tc_480 -> processing.packager: "Transcoded"
+
+processing.packager -> origin.origin_server: "HLS segments"
+
+origin.origin_server -> origin.temp_storage: "Store segments"
+
+# Origin to CDN
+origin.origin_server -> distribution.cdn: "Playlist + Segments"
+
+distribution.cdn -> distribution.edges.edge_us: "Replicate"
+distribution.cdn -> distribution.edges.edge_eu: "Replicate"
+distribution.cdn -> distribution.edges.edge_asia: "Replicate"
+
+# CDN to Viewers
+distribution.edges.edge_us -> viewers.player: "Nearest edge"
+
+viewers.player -> viewers.viewer1: "Playback"
+viewers.player -> viewers.viewer2: "Playback"
+viewers.player -> viewers.viewer3: "Playback"
+
+# ═══════════════════════════════════════════════════════════════
+# TIMING ANNOTATIONS
+# ═══════════════════════════════════════════════════════════════
+
+timing: Latency Breakdown {
+  style.fill: "#ffebee"
+  
+  content: |md
+    **End-to-End Latency: ~10-15s**
+    
+    - Encoder buffer: 2s
+    - Network upload: 1s
+    - Segmentation: 4s (segment duration)
+    - Transcode: 2-3s
+    - CDN propagation: 1-2s
+    - Player buffer: 6-8s
+  |
+}
+
+key_difference: |md
+  **Key Difference from VOD:**
+  Processing happens IN PARALLEL
+  with stream reception
+  Not AFTER upload completes
+| {
+  style.fill: "#fff9c4"
+}

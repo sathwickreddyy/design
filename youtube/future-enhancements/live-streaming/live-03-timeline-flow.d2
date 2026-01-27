@@ -1,0 +1,235 @@
+# Live Streaming Timeline - Real-time Flow
+
+direction: right
+
+title: |md
+  # Live Streaming: Timeline View
+  What happens every 4 seconds (segment duration)
+|
+
+# ═══════════════════════════════════════════════════════════════
+# TIME AXIS (Segments)
+# ═══════════════════════════════════════════════════════════════
+
+t0: T=0s\nStream Start {
+  shape: oval
+  style.fill: "#4caf50"
+}
+
+t4: T=4s\nSegment 1 Ready {
+  shape: oval
+  style.fill: "#8bc34a"
+}
+
+t8: T=8s\nSegment 2 Ready {
+  shape: oval
+  style.fill: "#cddc39"
+}
+
+t12: T=12s\nSegment 3 Ready {
+  shape: oval
+  style.fill: "#ffeb3b"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# SEGMENT 0 (First 4 seconds)
+# ═══════════════════════════════════════════════════════════════
+
+seg0: Segment 0 (0-4s) {
+  style.fill: "#e3f2fd"
+  
+  encode: Encoder Captures {
+    shape: rectangle
+    style.fill: "#90caf9"
+    label: "0s → 4s\nCapture + encode"
+  }
+  
+  ingest: Ingest Receives {
+    shape: rectangle
+    style.fill: "#64b5f6"
+    label: "2s → 4s\nBuffer"
+  }
+  
+  transcode: Transcode {
+    shape: rectangle
+    style.fill: "#42a5f5"
+    label: "4s → 6s\nMust finish!"
+  }
+  
+  available: Available {
+    shape: rectangle
+    style.fill: "#2196f3"
+    label: "6s\nReady for viewers"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# SEGMENT 1 (Next 4 seconds)
+# ═══════════════════════════════════════════════════════════════
+
+seg1: Segment 1 (4-8s) {
+  style.fill: "#f3e5f5"
+  
+  encode: Encoder Captures {
+    shape: rectangle
+    style.fill: "#ce93d8"
+    label: "4s → 8s\nCapture + encode"
+  }
+  
+  ingest: Ingest Receives {
+    shape: rectangle
+    style.fill: "#ba68c8"
+    label: "6s → 8s\nBuffer"
+  }
+  
+  transcode: Transcode {
+    shape: rectangle
+    style.fill: "#ab47bc"
+    label: "8s → 10s\nParallel!"
+  }
+  
+  available: Available {
+    shape: rectangle
+    style.fill: "#9c27b0"
+    label: "10s\nReady"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PARALLEL PROCESSING
+# ═══════════════════════════════════════════════════════════════
+
+parallel: At T=8s (Parallel Processing) {
+  style.fill: "#fff9c4"
+  
+  seg0_serve: Segment 0 {
+    shape: rectangle
+    style.fill: "#aed581"
+    label: "Being served\nto viewers"
+  }
+  
+  seg1_transcode: Segment 1 {
+    shape: rectangle
+    style.fill: "#ffb74d"
+    label: "Being transcoded"
+  }
+  
+  seg2_ingest: Segment 2 {
+    shape: rectangle
+    style.fill: "#e57373"
+    label: "Being ingested"
+  }
+  
+  seg3_capture: Segment 3 {
+    shape: rectangle
+    style.fill: "#90a4ae"
+    label: "Being captured"
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# VIEWER EXPERIENCE
+# ═══════════════════════════════════════════════════════════════
+
+viewer_timeline: Viewer Experience {
+  style.fill: "#e8f5e9"
+  
+  join: Viewer Joins\nat T=10s {
+    shape: oval
+    style.fill: "#66bb6a"
+  }
+  
+  fetch: Fetch Playlist {
+    shape: rectangle
+    style.fill: "#4caf50"
+    
+    label: |md
+      GET master.m3u8
+      Current sequence: 2
+      Available: seg0, seg1
+    |
+  }
+  
+  play_seg0: Play Segment 0 {
+    shape: rectangle
+    style.fill: "#43a047"
+    label: "10s → 14s\nViewer is 10s behind"
+  }
+  
+  play_seg1: Play Segment 1 {
+    shape: rectangle
+    style.fill: "#388e3c"
+    label: "14s → 18s\nStill 10s behind"
+  }
+  
+  catchup: "Catching Up?" {
+    shape: diamond
+    style.fill: "#fff9c4"
+  }
+  
+  stable: Stable Delay {
+    shape: rectangle
+    style.fill: "#2e7d32"
+    label: "~10s latency\n(acceptable)"
+  }
+  
+  join -> fetch
+  fetch -> play_seg0
+  play_seg0 -> play_seg1
+  play_seg1 -> catchup
+  catchup -> stable: "No - by design"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PIPELINE VISUALIZATION
+# ═══════════════════════════════════════════════════════════════
+
+pipeline: Processing Pipeline {
+  style.fill: "#ffebee"
+  
+  content: |md
+    **Continuous Pipeline:**
+    
+    ```
+    Time:  0s    4s    8s    12s   16s
+           │     │     │     │     │
+    Seg0:  ████──▓▓▓▓──●●●●
+    Seg1:        ████──▓▓▓▓──●●●●
+    Seg2:              ████──▓▓▓▓──●●●●
+    Seg3:                    ████──▓▓▓▓
+    
+    Legend:
+    ████ = Capture/Encode
+    ▓▓▓▓ = Transcode
+    ●●●● = Serve to viewers
+    ```
+    
+    **Key Insight:**
+    Multiple segments in different
+    stages simultaneously
+  |
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CRITICAL CONSTRAINT
+# ═══════════════════════════════════════════════════════════════
+
+critical_constraint: Critical Constraint {
+  style.fill: "#fff3e0"
+  
+  content: |md
+    **Time Constraint:**
+    
+    Transcode time < Segment duration
+    
+    If transcode takes 5s but segment is 4s:
+    → Buffer grows
+    → Delay increases
+    → Eventually crashes
+    
+    **Solution:**
+    - Use faster presets
+    - Scale transcoder cores
+    - Drop quality variants
+  |
+}

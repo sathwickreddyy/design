@@ -1,0 +1,380 @@
+# Live Streaming Failure Scenarios & Solutions
+
+direction: down
+
+title: |md
+  # Live Streaming: Failure Modes & Resilience
+  What can go wrong and how to handle it
+|
+
+# ═══════════════════════════════════════════════════════════════
+# FAILURE SCENARIO 1: Broadcaster Disconnect
+# ═══════════════════════════════════════════════════════════════
+
+scenario1: Scenario 1 - Broadcaster Network Issue {
+  style.fill: "#ffebee"
+  
+  problem: Problem {
+    shape: rectangle
+    style.fill: "#ef5350"
+    
+    label: |md
+      **What Happened:**
+      Broadcaster's WiFi drops
+      RTMP connection lost
+      Stream stops abruptly
+    |
+  }
+  
+  detection: Detection {
+    shape: diamond
+    style.fill: "#ff5252"
+    
+    label: "Ingest server\nno data for 5s"
+  }
+  
+  action1: Notify Broadcaster {
+    shape: rectangle
+    style.fill: "#ff7043"
+    label: "Push notification:\nConnection lost"
+  }
+  
+  action2: Hold Stream {
+    shape: rectangle
+    style.fill: "#ff8a65"
+    label: "30s grace period\nfor reconnection"
+  }
+  
+  reconnect: Broadcaster\nReconnects? {
+    shape: diamond
+    style.fill: "#ffab91"
+  }
+  
+  resume: Resume Stream {
+    shape: rectangle
+    style.fill: "#4caf50"
+    label: "Continue with\nsame stream_id"
+  }
+  
+  end: End Stream {
+    shape: rectangle
+    style.fill: "#9e9e9e"
+    label: "Mark as ended\nCleanup resources"
+  }
+  
+  problem -> detection
+  detection -> action1
+  detection -> action2
+  action2 -> reconnect
+  reconnect -> resume: "Yes, < 30s"
+  reconnect -> end: "No, timeout"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# FAILURE SCENARIO 2: Transcoder Can't Keep Up
+# ═══════════════════════════════════════════════════════════════
+
+scenario2: Scenario 2 - Transcoder Overload {
+  style.fill: "#fff3e0"
+  
+  problem: Problem {
+    shape: rectangle
+    style.fill: "#ff9800"
+    
+    label: |md
+      **What Happened:**
+      Transcode takes 5s
+      But segment is only 4s
+      Buffer growing
+    |
+  }
+  
+  detection: Monitor Buffer {
+    shape: diamond
+    style.fill: "#ffb74d"
+    label: "Buffer > 10s?"
+  }
+  
+  action1: Lower Quality {
+    shape: rectangle
+    style.fill: "#ffcc80"
+    
+    label: |md
+      Drop 1080p variant
+      Keep 720p, 480p
+      Reduces CPU load
+    |
+  }
+  
+  action2: Faster Preset {
+    shape: rectangle
+    style.fill: "#ffe0b2"
+    
+    label: |md
+      Switch to "ultrafast"
+      Lower quality but faster
+      Catches up on buffer
+    |
+  }
+  
+  action3: Scale Workers {
+    shape: rectangle
+    style.fill: "#fff3e0"
+    
+    label: |md
+      Add more transcoder cores
+      Distribute load
+      (Takes 60s to spin up)
+    |
+  }
+  
+  recovery: Buffer Normal? {
+    shape: diamond
+    style.fill: "#fff9c4"
+  }
+  
+  restored: Restore Quality {
+    shape: rectangle
+    style.fill: "#4caf50"
+    label: "Re-enable 1080p\nSlower preset"
+  }
+  
+  problem -> detection
+  detection -> action1: "Immediate"
+  detection -> action2: "Immediate"
+  detection -> action3: "Parallel"
+  action1 -> recovery
+  action2 -> recovery
+  action3 -> recovery
+  recovery -> restored: "Yes"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# FAILURE SCENARIO 3: Origin Server Crash
+# ═══════════════════════════════════════════════════════════════
+
+scenario3: Scenario 3 - Origin Server Failure {
+  style.fill: "#e8f5e9"
+  
+  problem: Problem {
+    shape: rectangle
+    style.fill: "#66bb6a"
+    
+    label: |md
+      **What Happened:**
+      Origin server crashes
+      Viewers can't fetch playlist
+      Stream appears offline
+    |
+  }
+  
+  detection: Health Check Fails {
+    shape: diamond
+    style.fill: "#81c784"
+    label: "Origin\nunresponsive?"
+  }
+  
+  action1: Failover {
+    shape: rectangle
+    style.fill: "#a5d6a7"
+    
+    label: |md
+      Load balancer routes to
+      standby origin server
+      < 5s switchover
+    |
+  }
+  
+  action2: Reconstruct State {
+    shape: rectangle
+    style.fill: "#c8e6c9"
+    
+    label: |md
+      New origin reads from:
+      - Redis (segment metadata)
+      - Storage (actual segments)
+      Rebuilds playlist
+    |
+  }
+  
+  restored: Stream Restored {
+    shape: rectangle
+    style.fill: "#4caf50"
+    label: "Viewers experience\n5-10s buffering"
+  }
+  
+  problem -> detection
+  detection -> action1: "Yes"
+  action1 -> action2
+  action2 -> restored
+}
+
+# ═══════════════════════════════════════════════════════════════
+# FAILURE SCENARIO 4: CDN Degradation
+# ═══════════════════════════════════════════════════════════════
+
+scenario4: Scenario 4 - CDN Edge Slow {
+  style.fill: "#e1f5fe"
+  
+  problem: Problem {
+    shape: rectangle
+    style.fill: "#29b6f6"
+    
+    label: |md
+      **What Happened:**
+      CDN edge location saturated
+      High latency for viewers
+      Buffering issues
+    |
+  }
+  
+  detection: Monitor Latency {
+    shape: diamond
+    style.fill: "#4fc3f7"
+    label: "Edge latency\n> 2s?"
+  }
+  
+  action1: Multi-CDN Failover {
+    shape: rectangle
+    style.fill: "#81d4fa"
+    
+    label: |md
+      DNS switches to
+      backup CDN (Cloudflare)
+      Players redirect
+    |
+  }
+  
+  action2: Lower Bitrate {
+    shape: rectangle
+    style.fill: "#b3e5fc"
+    
+    label: |md
+      Adaptive bitrate kicks in
+      Players drop to 480p
+      Reduces bandwidth need
+    |
+  }
+  
+  restored: Service Restored {
+    shape: rectangle
+    style.fill: "#4caf50"
+  }
+  
+  problem -> detection
+  detection -> action1: "Yes"
+  detection -> action2: "Parallel"
+  action1 -> restored
+  action2 -> restored
+}
+
+# ═══════════════════════════════════════════════════════════════
+# RESILIENCE PATTERNS
+# ═══════════════════════════════════════════════════════════════
+
+patterns: Resilience Patterns {
+  style.fill: "#f3e5f5"
+  
+  pattern1: Graceful Degradation {
+    shape: rectangle
+    style.fill: "#ce93d8"
+    
+    label: |md
+      **Principle:**
+      Reduce quality before failing
+      
+      **Examples:**
+      - Drop 1080p → keep 720p
+      - Lower frame rate 30→24 fps
+      - Increase compression
+    |
+  }
+  
+  pattern2: Circuit Breaker {
+    shape: rectangle
+    style.fill: "#ba68c8"
+    
+    label: |md
+      **Principle:**
+      Stop retrying failing component
+      
+      **Example:**
+      If thumbnail service fails 3x,
+      skip thumbnails for all streams
+      for 5 minutes
+    |
+  }
+  
+  pattern3: Bulkhead {
+    shape: rectangle
+    style.fill: "#ab47bc"
+    
+    label: |md
+      **Principle:**
+      Isolate failures
+      
+      **Example:**
+      Stream 1 overload doesn't
+      affect Stream 2
+      (separate worker pools)
+    |
+  }
+  
+  pattern4: Redundancy {
+    shape: rectangle
+    style.fill: "#9c27b0"
+    
+    label: |md
+      **Principle:**
+      Multiple copies of critical components
+      
+      **Examples:**
+      - 2 origin servers (active-standby)
+      - 2 CDN providers
+      - 3 ingest servers (load balanced)
+    |
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════
+# MONITORING & ALERTS
+# ═══════════════════════════════════════════════════════════════
+
+monitoring: Monitoring Strategy {
+  style.fill: "#fff9c4"
+  
+  content: |md
+    **Key Metrics to Track:**
+    
+    1. **Ingest:**
+       - Bitrate stability
+       - Connection drops
+       - Frame drops
+    
+    2. **Transcoding:**
+       - Processing time per segment
+       - Buffer depth
+       - CPU utilization
+    
+    3. **Origin:**
+       - Playlist update frequency
+       - Segment availability
+       - Request latency
+    
+    4. **CDN:**
+       - Cache hit rate
+       - Edge latency
+       - Bandwidth usage
+    
+    5. **Viewer Experience:**
+       - Buffer ratio
+       - Playback errors
+       - Average latency
+    
+    **Alerting Thresholds:**
+    - Transcode time > 3s: Warning
+    - Transcode time > 4s: Critical
+    - Buffer depth > 15s: Critical
+    - Origin 5xx > 5%: Critical
+  |
+}
