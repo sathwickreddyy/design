@@ -53,6 +53,14 @@ SHARD_CONFIGS = [
         "password": os.getenv("DB_SHARD_1_PASSWORD", "shard_pass"),
         "database": os.getenv("DB_SHARD_1_NAME", "drive_shard_1"),
         "shard_id": 1
+    },
+    {
+        "host": os.getenv("DB_SHARD_2_HOST", "db_shard_2"),
+        "port": int(os.getenv("DB_SHARD_2_PORT", "5432")),
+        "user": os.getenv("DB_SHARD_2_USER", "shard_user"),
+        "password": os.getenv("DB_SHARD_2_PASSWORD", "shard_pass"),
+        "database": os.getenv("DB_SHARD_2_NAME", "drive_shard_2"),
+        "shard_id": 2
     }
 ]
 
@@ -247,6 +255,130 @@ def insert_file_metadata(user_id: int, file_name: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"✗ Failed to insert record for user {user_id}: {e}")
         raise
+
+
+def check_mapping() -> Dict[str, Any]:
+    """
+    Analyze how existing data would be redistributed with current sharding strategy.
+    
+    Purpose:
+        Show the impact of changing sharding strategy from %2 to %3.
+        Demonstrates the challenge of resharding existing data.
+    
+    Consumers:
+        GET /migration/analysis endpoint.
+    
+    Logic:
+        1. Read all existing records from all shards
+        2. Calculate current shard (where data currently lives)
+        3. Calculate new shard using current NUM_SHARDS (user_id % 3)
+        4. Compare and track: records that stay vs need migration
+        5. Provide detailed breakdown per shard and per user
+    
+    Returns:
+        dict: Migration analysis with statistics and detailed mapping
+    """
+    logger.info("=== Starting Migration Analysis ===")
+    logger.info(f"Current sharding strategy: user_id % {NUM_SHARDS}")
+    
+    # Track statistics
+    total_records = 0
+    records_stay = 0
+    records_move = 0
+    
+    # Track migrations per shard
+    shard_analysis = {}
+    user_movements = []  # Detailed user-by-user tracking
+    
+    # Analyze old 2-shard configuration (before adding shard 2)
+    old_num_shards = 2
+    
+    # Read all records from existing shards (0 and 1)
+    for old_shard_id in range(old_num_shards):
+        try:
+            with get_db_connection(old_shard_id) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("SELECT id, user_id, file_name FROM file_metadata ORDER BY user_id;")
+                    records = cursor.fetchall()
+                    
+                    shard_analysis[old_shard_id] = {
+                        "current_shard": old_shard_id,
+                        "total_records": len(records),
+                        "stay_count": 0,
+                        "move_count": 0,
+                        "migrations_to": {}
+                    }
+                    
+                    for record in records:
+                        total_records += 1
+                        user_id = record['user_id']
+                        
+                        # Calculate old shard (user_id % 2)
+                        old_shard = user_id % old_num_shards
+                        
+                        # Calculate new shard (user_id % 3)
+                        new_shard = get_shard_id(user_id)  # Uses current NUM_SHARDS
+                        
+                        if old_shard == new_shard:
+                            records_stay += 1
+                            shard_analysis[old_shard_id]["stay_count"] += 1
+                        else:
+                            records_move += 1
+                            shard_analysis[old_shard_id]["move_count"] += 1
+                            
+                            # Track destination
+                            if new_shard not in shard_analysis[old_shard_id]["migrations_to"]:
+                                shard_analysis[old_shard_id]["migrations_to"][new_shard] = 0
+                            shard_analysis[old_shard_id]["migrations_to"][new_shard] += 1
+                        
+                        # Store detailed movement info for logging
+                        user_movements.append({
+                            "user_id": user_id,
+                            "file_name": record['file_name'],
+                            "current_shard": old_shard,
+                            "new_shard": new_shard,
+                            "needs_migration": old_shard != new_shard
+                        })
+                        
+                        # Log every 10th user for visibility
+                        if total_records % 10 == 0:
+                            status = "STAY" if old_shard == new_shard else f"MOVE {old_shard}→{new_shard}"
+                            logger.info(f"User {user_id}: {status}")
+        
+        except Exception as e:
+            logger.error(f"Failed to analyze shard {old_shard_id}: {e}")
+            raise
+    
+    # Calculate percentages
+    stay_percentage = (records_stay / total_records * 100) if total_records > 0 else 0
+    move_percentage = (records_move / total_records * 100) if total_records > 0 else 0
+    
+    # Log summary
+    logger.info("=== Migration Analysis Summary ===")
+    logger.info(f"Total records analyzed: {total_records}")
+    logger.info(f"Records that STAY in current shard: {records_stay} ({stay_percentage:.1f}%)")
+    logger.info(f"Records that NEED MIGRATION: {records_move} ({move_percentage:.1f}%)")
+    
+    for shard_id, analysis in shard_analysis.items():
+        logger.info(f"\nShard {shard_id}:")
+        logger.info(f"  Current records: {analysis['total_records']}")
+        logger.info(f"  Will stay: {analysis['stay_count']}")
+        logger.info(f"  Will move: {analysis['move_count']}")
+        if analysis['migrations_to']:
+            for dest_shard, count in analysis['migrations_to'].items():
+                logger.info(f"    → To Shard {dest_shard}: {count} records")
+    
+    return {
+        "old_sharding_strategy": f"user_id % {old_num_shards}",
+        "new_sharding_strategy": f"user_id % {NUM_SHARDS}",
+        "total_records": total_records,
+        "records_stay": records_stay,
+        "records_move": records_move,
+        "stay_percentage": round(stay_percentage, 2),
+        "move_percentage": round(move_percentage, 2),
+        "shard_analysis": shard_analysis,
+        "sample_movements": user_movements[:20]  # First 20 for inspection
+    }
 
 
 def get_shard_stats() -> List[Dict[str, Any]]:
@@ -448,6 +580,33 @@ async def get_stats():
         }
     except Exception as e:
         logger.error(f"Failed to get stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/migration/analysis")
+async def analyze_migration():
+    """
+    Analyze the impact of changing sharding strategy.
+    
+    Purpose:
+        Show how many records would need to migrate when changing from %2 to %3.
+    
+    Consumers:
+        Administrators planning database resharding.
+    
+    Logic:
+        1. Call check_mapping() to analyze current data
+        2. Return detailed migration statistics
+        3. Show which users stay and which need to move
+    """
+    try:
+        analysis = check_mapping()
+        return {
+            "success": True,
+            "analysis": analysis
+        }
+    except Exception as e:
+        logger.error(f"Migration analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

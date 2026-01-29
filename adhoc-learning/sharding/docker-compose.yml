@@ -57,6 +57,34 @@ services:
       timeout: 5s
       retries: 5
 
+  db_shard_2:
+    image: postgres:15-alpine
+    container_name: db_shard_2
+    environment:
+      POSTGRES_USER: shard_user
+      POSTGRES_PASSWORD: shard_pass
+      POSTGRES_DB: drive_shard_2
+    ports:
+      - "5434:5432"
+    volumes:
+      - db_shard_2_data:/var/lib/postgresql/data
+    networks:
+      - observability-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      project_name: "drive-sharding"
+      service_type: "database"
+      shard_id: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shard_user -d drive_shard_2"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build: .
     container_name: drive_sharding_api
@@ -73,10 +101,17 @@ services:
       DB_SHARD_1_USER: shard_user
       DB_SHARD_1_PASSWORD: shard_pass
       DB_SHARD_1_NAME: drive_shard_1
+      DB_SHARD_2_HOST: db_shard_2
+      DB_SHARD_2_PORT: 5432
+      DB_SHARD_2_USER: shard_user
+      DB_SHARD_2_PASSWORD: shard_pass
+      DB_SHARD_2_NAME: drive_shard_2
     depends_on:
       db_shard_0:
         condition: service_healthy
       db_shard_1:
+        condition: service_healthy
+      db_shard_2:
         condition: service_healthy
     networks:
       - observability-net
@@ -92,6 +127,7 @@ services:
 volumes:
   db_shard_0_data:
   db_shard_1_data:
+  db_shard_2_data:
 
 networks:
   observability-net:
