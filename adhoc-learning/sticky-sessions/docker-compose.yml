@@ -1,0 +1,57 @@
+# Docker Compose for Sticky Sessions Demo
+# ========================================
+# Architecture:
+#   Client -> Nginx (port 8080) -> [app1, app2, app3]
+#
+# With ip_hash enabled, same client IP always hits same backend
+
+version: '3.8'
+
+services:
+  # =========================================
+  # NGINX LOAD BALANCER
+  # =========================================
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-lb
+    ports:
+      - "8080:80"  # Access via http://localhost:8080
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
+      - app3
+    networks:
+      - sticky-net
+
+  # =========================================
+  # FASTAPI CONTAINERS (x3)
+  # =========================================
+  app1:
+    build: .
+    container_name: fastapi-app1
+    environment:
+      - APP_NAME=SERVER-1-🟢
+    networks:
+      - sticky-net
+
+  app2:
+    build: .
+    container_name: fastapi-app2
+    environment:
+      - APP_NAME=SERVER-2-🔵
+    networks:
+      - sticky-net
+
+  app3:
+    build: .
+    container_name: fastapi-app3
+    environment:
+      - APP_NAME=SERVER-3-🟣
+    networks:
+      - sticky-net
+
+networks:
+  sticky-net:
+    driver: bridge
