@@ -6,6 +6,7 @@ You are assisting a senior software engineer.
 - ❌ Do NOT create new files unless I explicitly approve.
 - ❌ Do NOT modify multiple files at once.
 - ❌ Do NOT auto-implement changes.
+- ❌ Do NOT use default bridge networks for Docker; always use the external observability-net.
 
 ## Required Workflow
 Before ANY code change:
@@ -14,6 +15,11 @@ Before ANY code change:
    - Files that would change
    - Why this approach
 2. Wait for explicit approval ("Approved, proceed").
+
+## Infrastructure & Docker Standards
+- **Network:** All `docker-compose.yml` files must include the external network `observability-net`.
+- **Logging Driver:** Ensure containers use the `json-file` logging driver (required for the Splunk monitor mount) with appropriate max-size and max-file rotation.
+- **Labels:** Add consistent metadata labels to services to ensure Splunk searchability (e.g., `project_name`, `service_type`).
 
 ## Python Coding Standards
 - **Imports:** Always place imports at the top of the file, categorized (Standard Lib, Third Party, Local).
