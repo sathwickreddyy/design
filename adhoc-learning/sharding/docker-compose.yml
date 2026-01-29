@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  db_shard_0:
+    image: postgres:15-alpine
+    container_name: db_shard_0
+    environment:
+      POSTGRES_USER: shard_user
+      POSTGRES_PASSWORD: shard_pass
+      POSTGRES_DB: drive_shard_0
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_shard_0_data:/var/lib/postgresql/data
+    networks:
+      - observability-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      project_name: "drive-sharding"
+      service_type: "database"
+      shard_id: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shard_user -d drive_shard_0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  db_shard_1:
+    image: postgres:15-alpine
+    container_name: db_shard_1
+    environment:
+      POSTGRES_USER: shard_user
+      POSTGRES_PASSWORD: shard_pass
+      POSTGRES_DB: drive_shard_1
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_shard_1_data:/var/lib/postgresql/data
+    networks:
+      - observability-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      project_name: "drive-sharding"
+      service_type: "database"
+      shard_id: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shard_user -d drive_shard_1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: drive_sharding_api
+    ports:
+      - "8000:8000"
+    environment:
+      DB_SHARD_0_HOST: db_shard_0
+      DB_SHARD_0_PORT: 5432
+      DB_SHARD_0_USER: shard_user
+      DB_SHARD_0_PASSWORD: shard_pass
+      DB_SHARD_0_NAME: drive_shard_0
+      DB_SHARD_1_HOST: db_shard_1
+      DB_SHARD_1_PORT: 5432
+      DB_SHARD_1_USER: shard_user
+      DB_SHARD_1_PASSWORD: shard_pass
+      DB_SHARD_1_NAME: drive_shard_1
+    depends_on:
+      db_shard_0:
+        condition: service_healthy
+      db_shard_1:
+        condition: service_healthy
+    networks:
+      - observability-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      project_name: "drive-sharding"
+      service_type: "api"
+
+volumes:
+  db_shard_0_data:
+  db_shard_1_data:
+
+networks:
+  observability-net:
+    external: true
