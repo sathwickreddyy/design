@@ -1,0 +1,114 @@
+# Docker Compose for Task Locking Demo
+# =======================================
+# Architecture:
+#   Client -> Nginx (port 8080) -> [worker1, worker2, worker3]
+#   All workers compete for tasks using SELECT FOR UPDATE SKIP LOCKED
+#
+# Note: db-init service runs first to create tables, preventing race conditions
+
+services:
+  # =========================================
+  # DATABASE INITIALIZATION (runs once)
+  # =========================================
+  db-init:
+    build: .
+    container_name: locking-db-init
+    environment:
+      - DATABASE_URL=postgresql://taskuser:taskpass@postgres:5432/taskdb
+    command: python init_db.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - locking-net
+    restart: "no"  # Run once and exit
+  # =========================================
+  # NGINX LOAD BALANCER
+  # =========================================
+  nginx:
+    image: nginx:alpine
+    container_name: locking-nginx-lb
+    ports:
+      - "8080:80"  # Access via http://localhost:8080
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - worker1
+      - worker2
+      - worker3
+    networks:
+      - locking-net
+
+  # =========================================
+  # POSTGRES DATABASE
+  # =========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: locking-postgres-db
+    environment:
+      - POSTGRES_USER=taskuser
+      - POSTGRES_PASSWORD=taskpass
+      - POSTGRES_DB=taskdb
+    ports:
+      - "5433:5432"  # Changed to 5433 to avoid conflicts
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - locking-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskuser -d taskdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # =========================================
+  # WORKER CONTAINERS (x3)
+  # =========================================
+  worker1:
+    build: .
+    container_name: locking-worker1
+    environment:
+      - APP_NAME=WORKER-1-🟢
+      - DATABASE_URL=postgresql://taskuser:taskpass@postgres:5432/taskdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - locking-net
+
+  worker2:
+    build: .
+    container_name: locking-worker2
+    environment:
+      - APP_NAME=WORKER-2-🔵
+      - DATABASE_URL=postgresql://taskuser:taskpass@postgres:5432/taskdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - locking-net
+
+  worker3:
+    build: .
+    container_name: locking-worker3
+    environment:
+      - APP_NAME=WORKER-3-🟣
+      - DATABASE_URL=postgresql://taskuser:taskpass@postgres:5432/taskdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - locking-net
+
+networks:
+  locking-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
