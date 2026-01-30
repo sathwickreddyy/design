@@ -610,6 +610,64 @@ async def analyze_migration():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/migration/execute")
+async def execute_migration():
+    """
+    Execute the actual data migration (DANGER ZONE).
+    
+    Purpose:
+        Physically move records from old shards to new shards.
+    
+    Consumers:
+        Administrators performing resharding.
+    
+    Logic:
+        1. Trigger the migration script logic
+        2. Move all records that need relocation
+        3. Return migration statistics
+        
+    WARNING:
+        This should ONLY be run when the application is offline!
+        Running this with active users will cause data inconsistency.
+    """
+    logger.warning("⚠️  MIGRATION EXECUTION REQUESTED - THIS IS DANGEROUS!")
+    
+    try:
+        # Import and run migration logic
+        # In production, this would be a separate background job
+        import subprocess
+        import os
+        
+        # Run the migration script
+        script_path = os.path.join(os.path.dirname(__file__), "..", "migrate_resharding.py")
+        
+        # Set environment variables for the subprocess
+        env = os.environ.copy()
+        env.update({
+            "DB_SHARD_0_HOST": os.getenv("DB_SHARD_0_HOST", "db_shard_0"),
+            "DB_SHARD_1_HOST": os.getenv("DB_SHARD_1_HOST", "db_shard_1"),
+            "DB_SHARD_2_HOST": os.getenv("DB_SHARD_2_HOST", "db_shard_2"),
+        })
+        
+        result = subprocess.run(
+            ["python3", script_path],
+            capture_output=True,
+            text=True,
+            env=env
+        )
+        
+        return {
+            "success": result.returncode == 0,
+            "message": "Migration executed. Check logs for details.",
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+        
+    except Exception as e:
+        logger.error(f"Migration execution failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/query/{user_id}")
 async def query_user_files(user_id: int):
     """
