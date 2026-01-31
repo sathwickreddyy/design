@@ -16,20 +16,10 @@ Before ANY code change:
    - Why this approach
 2. Wait for explicit approval ("Approved, proceed").
 
-## Infrastructure & Docker Standards
-- **Network:** All `docker-compose.yml` files must include the external network `observability-net`.
-- **Logging Driver:** Ensure containers use the `json-file` logging driver (required for the Splunk monitor mount) with appropriate max-size and max-file rotation.
-- **Labels:** Add consistent metadata labels to services to ensure Splunk searchability (e.g., `project_name`, `service_type`).
-
-## Python Coding Standards
-- **Imports:** Always place imports at the top of the file, categorized (Standard Lib, Third Party, Local).
-- **Structure:** Avoid "god methods." Decompose logic into small, testable, and reusable functions.
-- **Logging:** Implement comprehensive logging. Every logical branch and major state change must be traceable.
-- **Documentation:** Every method must have a clear docstring explaining:
-  - **Purpose:** What it does.
-  - **Consumers:** Who/what calls it.
-  - **Logic:** Simple steps of how it works.
-- **Maintenance:** If you encounter outdated or missing documentation in existing code, update it immediately as part of the task.
+## Detailed Standards (See Separate Guides)
+- **[Docker & Infrastructure](.github/docker-standards.md)** - Network config, logging, labels, health checks
+- **[Splunk Debugging](.github/splunk-debugging.md)** - Log searches, troubleshooting, query patterns
+- **[Python Coding](.github/python-standards.md)** - Imports, structure, logging, documentation
 
 ## Learning Mode & Diffs
 - Prefer minimal diffs.
