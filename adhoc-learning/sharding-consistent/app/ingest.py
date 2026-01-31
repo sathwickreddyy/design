@@ -394,3 +394,143 @@ async def query_user_files(user_id: int):
     except Exception as e:
         logger.error(f"Query failed for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/migration/compare_approaches")
+async def compare_migration_approaches():
+    """
+    Compare Naive (Modulo) vs Consistent Hashing migration impact.
+    
+    Shows detailed table of each user:
+    - Where they are NOW (with 2 shards)
+    - Where they WILL BE (with 3 shards)
+    - WHY they move (virtual node analysis)
+    - Comparison with modulo approach
+    """
+    import time
+    start_time = time.time()
+    
+    # Get all existing users from shards 0 and 1
+    all_users = []
+    for shard_id in [0, 1]:
+        try:
+            with get_db_connection(shard_id) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT DISTINCT user_id FROM file_metadata ORDER BY user_id")
+                    users = cursor.fetchall()
+                    all_users.extend([user[0] for user in users])
+        except Exception as e:
+            logger.error(f"Failed to get users from shard {shard_id}: {e}")
+    
+    if not all_users:
+        return {"success": False, "message": "No users found"}
+    
+    all_users = sorted(set(all_users))
+    
+    # Create a ring WITH shard 2 for comparison
+    ring_with_3_shards = ConsistentHashRing(virtual_nodes_per_shard=VIRTUAL_NODES)
+    ring_with_3_shards.add_shard(0)
+    ring_with_3_shards.add_shard(1)
+    ring_with_3_shards.add_shard(2)
+    
+    # Analyze each user
+    migration_details = []
+    consistent_moves = 0
+    modulo_moves = 0
+    
+    for user_id in all_users:
+        # Current routing (2 shards)
+        old_shard_consistent = hash_ring.get_shard(user_id)
+        old_shard_modulo = user_id % 2
+        
+        # New routing (3 shards)
+        new_shard_consistent = ring_with_3_shards.get_shard(user_id)
+        new_shard_modulo = user_id % 3
+        
+        # Get hash and virtual node details
+        user_hash = hash_ring._hash(str(user_id))
+        
+        # Find which virtual node serves this user (OLD ring)
+        ring_positions = [pos for pos, _ in hash_ring.ring]
+        import bisect
+        old_index = bisect.bisect_right(ring_positions, user_hash)
+        if old_index == len(hash_ring.ring):
+            old_index = 0
+        old_vnode_pos, old_vnode_shard = hash_ring.ring[old_index]
+        
+        # Find which virtual node serves this user (NEW ring)
+        new_ring_positions = [pos for pos, _ in ring_with_3_shards.ring]
+        new_index = bisect.bisect_right(new_ring_positions, user_hash)
+        if new_index == len(ring_with_3_shards.ring):
+            new_index = 0
+        new_vnode_pos, new_vnode_shard = ring_with_3_shards.ring[new_index]
+        
+        # Check movements
+        consistent_moved = old_shard_consistent != new_shard_consistent
+        modulo_moved = old_shard_modulo != new_shard_modulo
+        
+        if consistent_moved:
+            consistent_moves += 1
+        if modulo_moved:
+            modulo_moves += 1
+        
+        # Determine reason for movement
+        reason = "No movement - same virtual node serves user"
+        if consistent_moved:
+            reason = f"NEW virtual node (shard_{new_vnode_shard}) inserted between user_hash={user_hash} and old_vnode={old_vnode_pos}"
+        
+        migration_details.append({
+            "user_id": user_id,
+            "user_hash": user_hash,
+            "consistent_hashing": {
+                "old_shard": old_shard_consistent,
+                "new_shard": new_shard_consistent,
+                "old_vnode_position": old_vnode_pos,
+                "new_vnode_position": new_vnode_pos,
+                "moved": consistent_moved,
+                "reason": reason
+            },
+            "modulo_hashing": {
+                "old_shard": old_shard_modulo,
+                "new_shard": new_shard_modulo,
+                "moved": modulo_moved,
+                "reason": f"user_id % 3 = {new_shard_modulo}" if modulo_moved else "No change"
+            }
+        })
+    
+    elapsed_time = time.time() - start_time
+    
+    # Summary statistics
+    total_users = len(all_users)
+    consistent_pct = (consistent_moves / total_users) * 100
+    modulo_pct = (modulo_moves / total_users) * 100
+    
+    result = {
+        "success": True,
+        "analysis_time_seconds": round(elapsed_time, 3),
+        "total_users_analyzed": total_users,
+        "summary": {
+            "consistent_hashing": {
+                "users_that_move": consistent_moves,
+                "users_that_stay": total_users - consistent_moves,
+                "movement_percentage": round(consistent_pct, 2),
+                "theoretical_movement": 33.33
+            },
+            "modulo_hashing": {
+                "users_that_move": modulo_moves,
+                "users_that_stay": total_users - modulo_moves,
+                "movement_percentage": round(modulo_pct, 2),
+                "theoretical_movement": 66.67
+            },
+            "savings": {
+                "fewer_moves": modulo_moves - consistent_moves,
+                "percentage_improvement": round(modulo_pct - consistent_pct, 2)
+            }
+        },
+        "detailed_migrations": migration_details[:50],  # First 50 for readability
+        "full_report_available": len(migration_details)
+    }
+    
+    logger.info(f"SPLUNK: {json.dumps({'event': 'migration_comparison', 'summary': result['summary']})}")
+    
+    return result
