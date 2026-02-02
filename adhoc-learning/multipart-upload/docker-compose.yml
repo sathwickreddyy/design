@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: multipart-postgres
+    environment:
+      POSTGRES_DB: uploads
+      POSTGRES_USER: uploader
+      POSTGRES_PASSWORD: upload123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uploader -d uploads"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "com.example.service=postgres"
+      - "com.example.project=multipart-upload"
+    networks:
+      - observability-net
+
+  api:
+    build: .
+    container_name: multipart-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://uploader:upload123@postgres:5432/uploads
+      TEMP_UPLOAD_DIR: /tmp/uploads
+      COMPLETED_UPLOAD_DIR: /data/completed
+    volumes:
+      - upload_temp:/tmp/uploads
+      - upload_completed:/data/completed
+      - ./app:/app
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "com.example.service=api"
+      - "com.example.project=multipart-upload"
+    networks:
+      - observability-net
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+  upload_temp:
+  upload_completed:
+
+networks:
+  observability-net:
+    external: true
