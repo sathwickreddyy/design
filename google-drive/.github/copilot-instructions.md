@@ -15,6 +15,8 @@ Before ANY code change:
    - Files that would change
    - Why this approach
 2. Wait for explicit approval ("Approved, proceed").
+3. Always update the .gitignore whenever required for unnecessary files that are not meant to be tracked.
+4. Logging: Ensure all code changes include appropriate logging at key points (entry, exit, errors) & give sample splunk log queries to verify post feature implementation.
 
 ## Detailed Standards (See Separate Guides)
 - **[Docker & Infrastructure](.github/docker-standards.md)** - Network config, logging, labels, health checks
