@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
+from typing import Optional
 import hashlib
 
 from database import get_db, engine
@@ -41,7 +42,7 @@ class InitUploadRequest(BaseModel):
     filename: str
     file_size: int
     chunk_size: int = 5242880  # 5MB default
-    file_hash: str = None  # SHA256 of full file (optional but recommended)
+    file_hash: Optional[str] = None  # SHA256 of full file (optional)
     hash_algorithm: str = "SHA256"  # Hash algorithm used
 
 

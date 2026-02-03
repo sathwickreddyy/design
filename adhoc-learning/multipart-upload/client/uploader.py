@@ -44,15 +44,18 @@ class MultipartUploader:
         if file_hash:
             print(f"  File SHA256: {file_hash[:16]}...")
         
+        payload = {
+            "filename": filename,
+            "file_size": file_size,
+            "chunk_size": self.chunk_size,
+            "hash_algorithm": "SHA256"
+        }
+        if file_hash:
+            payload["file_hash"] = file_hash
+        
         response = requests.post(
             f"{self.api_url}/upload/init",
-            json={
-                "filename": filename,
-                "file_size": file_size,
-                "chunk_size": self.chunk_size,
-                "file_hash": file_hash,
-                "hash_algorithm": "SHA256"
-            }
+            json=payload
         )
         response.raise_for_status()
         
