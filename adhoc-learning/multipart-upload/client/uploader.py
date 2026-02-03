@@ -1,11 +1,12 @@
-"""Multipart upload client with parallel workers."""
+"""Multipart upload client with parallel workers and checksum verification."""
 import os
 import sys
 import time
 import requests
+import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
@@ -13,23 +14,44 @@ MAX_WORKERS = 4  # Parallel upload threads
 
 
 class MultipartUploader:
-    """Client for uploading large files using multipart upload."""
+    """Client for uploading large files using multipart upload with checksums."""
     
     def __init__(self, api_url: str = API_BASE_URL, chunk_size: int = CHUNK_SIZE, max_workers: int = MAX_WORKERS):
         self.api_url = api_url
         self.chunk_size = chunk_size
         self.max_workers = max_workers
     
-    def init_upload(self, filename: str, file_size: int) -> tuple[str, int]:
+    @staticmethod
+    def calculate_file_hash(file_path: str, algorithm: str = "SHA256") -> str:
+        """Calculate hash of entire file."""
+        hash_obj = hashlib.new(algorithm.lower())
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(65536)  # 64KB chunks
+                if not chunk:
+                    break
+                hash_obj.update(chunk)
+        return hash_obj.hexdigest()
+    
+    @staticmethod
+    def calculate_part_hash(data: bytes, algorithm: str = "MD5") -> str:
+        """Calculate hash of a part."""
+        return hashlib.new(algorithm.lower()).update(data) or hashlib.new(algorithm.lower(), data).hexdigest()
+    
+    def init_upload(self, filename: str, file_size: int, file_hash: str = None) -> Tuple[str, int]:
         """Initialize upload session and get session ID."""
         print(f"Initializing upload for {filename} ({file_size / (1024*1024):.2f} MB)...")
+        if file_hash:
+            print(f"  File SHA256: {file_hash[:16]}...")
         
         response = requests.post(
             f"{self.api_url}/upload/init",
             json={
                 "filename": filename,
                 "file_size": file_size,
-                "chunk_size": self.chunk_size
+                "chunk_size": self.chunk_size,
+                "file_hash": file_hash,
+                "hash_algorithm": "SHA256"
             }
         )
         response.raise_for_status()
@@ -50,11 +72,15 @@ class MultipartUploader:
         return response.json()
     
     def upload_part(self, session_id: str, part_number: int, chunk_data: bytes) -> bool:
-        """Upload a single part."""
+        """Upload a single part with MD5 checksum."""
         try:
+            # Calculate MD5 hash of part
+            part_hash = hashlib.md5(chunk_data).hexdigest()
+            
             response = requests.put(
                 f"{self.api_url}/upload/{session_id}/part/{part_number}",
-                files={"file": (f"part_{part_number}", chunk_data)}
+                files={"file": (f"part_{part_number}", chunk_data)},
+                headers={"X-Part-Hash": part_hash}
             )
             response.raise_for_status()
             return True
@@ -71,7 +97,7 @@ class MultipartUploader:
     
     def upload_file(self, file_path: str, session_id: Optional[str] = None) -> str:
         """
-        Upload a file using multipart upload.
+        Upload a file using multipart upload with checksums.
         
         If session_id is provided, resume from that session.
         Otherwise, start a new upload.
@@ -83,6 +109,13 @@ class MultipartUploader:
         file_size = file_path.stat().st_size
         filename = file_path.name
         
+        # Calculate file hash if starting new upload
+        file_hash = None
+        if not session_id:
+            print("Calculating file hash...")
+            file_hash = self.calculate_file_hash(str(file_path))
+            print(f"✓ File SHA256: {file_hash[:16]}...")
+        
         # Start or resume session
         if session_id:
             print(f"Resuming upload session: {session_id}")
@@ -91,7 +124,7 @@ class MultipartUploader:
             completed_parts = set(status["completed_parts"])
             print(f"Already completed: {len(completed_parts)}/{total_parts} parts")
         else:
-            session_id, total_parts = self.init_upload(filename, file_size)
+            session_id, total_parts = self.init_upload(filename, file_size, file_hash)
             completed_parts = set()
         
         # Read file and split into chunks

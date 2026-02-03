@@ -1,5 +1,5 @@
 -- Upload Sessions Table
--- Tracks metadata for each multipart upload session
+-- Tracks metadata for each multipart upload session with checksum verification
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
     session_id VARCHAR(64) PRIMARY KEY,
@@ -8,6 +8,12 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
     chunk_size INTEGER NOT NULL,
     total_parts INTEGER NOT NULL,
     completed_parts INTEGER[] DEFAULT '{}',
+    
+    -- Checksum fields for integrity verification
+    file_hash VARCHAR(64),                    -- SHA256 of full file (hex string)
+    hash_algorithm VARCHAR(20) DEFAULT 'SHA256',
+    part_hashes JSONB DEFAULT '{}',           -- {"1": "md5_hex", "2": "md5_hex", ...}
+    
     status VARCHAR(20) DEFAULT 'in_progress',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

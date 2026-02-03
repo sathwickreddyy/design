@@ -7,11 +7,12 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
+import hashlib
 
 from database import get_db, engine
 from models import Base, UploadSession
@@ -40,6 +41,8 @@ class InitUploadRequest(BaseModel):
     filename: str
     file_size: int
     chunk_size: int = 5242880  # 5MB default
+    file_hash: str = None  # SHA256 of full file (optional but recommended)
+    hash_algorithm: str = "SHA256"  # Hash algorithm used
 
 
 class InitUploadResponse(BaseModel):
@@ -95,6 +98,9 @@ async def init_upload(request: InitUploadRequest, db: Session = Depends(get_db))
         chunk_size=request.chunk_size,
         total_parts=total_parts,
         completed_parts=[],
+        file_hash=request.file_hash,
+        hash_algorithm=request.hash_algorithm,
+        part_hashes={},
         status="in_progress"
     )
     
@@ -114,13 +120,17 @@ async def upload_part(
     session_id: str,
     part_number: int,
     file: UploadFile = File(...),
+    x_part_hash: str = Header(None),
     db: Session = Depends(get_db)
 ):
     """
-    Upload a single part of the file.
+    Upload a single part of the file with MD5 checksum verification.
     
     Idempotent: Uploading the same part twice will overwrite the previous one.
     This is critical for retry logic on network failures.
+    
+    Args:
+        x_part_hash: Optional MD5 hash of the part. If provided, part is verified.
     """
     # Verify session exists
     session = db.query(UploadSession).filter(UploadSession.session_id == session_id).first()
@@ -149,16 +159,34 @@ async def upload_part(
         with open(part_path, "wb") as f:
             f.write(content)
         
-        # Update completed parts using SQL-level atomic operation
+        # Verify part hash if provided
+        if x_part_hash:
+            part_md5 = hashlib.md5(content).hexdigest()
+            if part_md5.lower() != x_part_hash.lower():
+                logger.error(f"Checksum mismatch for part {part_number}: expected {x_part_hash}, got {part_md5}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Checksum mismatch for part {part_number}"
+                )
+            logger.info(f"Part {part_number} checksum verified: {part_md5}")
+        
+        # Update completed parts and store part hash using SQL-level atomic operation
         # This prevents race conditions when multiple parts upload simultaneously
+        part_md5 = hashlib.md5(content).hexdigest()
         db.execute(
             text("""
                 UPDATE upload_sessions
-                SET completed_parts = array_append(completed_parts, :part_num)
+                SET completed_parts = array_append(completed_parts, :part_num),
+                    part_hashes = jsonb_set(part_hashes, ARRAY[:part_key], :part_hash)
                 WHERE session_id = :session_id
                   AND NOT :part_num = ANY(completed_parts)
             """),
-            {"session_id": session_id, "part_num": part_number}
+            {
+                "session_id": session_id,
+                "part_num": part_number,
+                "part_key": str(part_number),
+                "part_hash": f'"{part_md5}"'
+            }
         )
         db.commit()
         
@@ -167,9 +195,12 @@ async def upload_part(
         return {
             "part_number": part_number,
             "received": True,
-            "size": len(content)
+            "size": len(content),
+            "checksum": part_md5
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to upload part {part_number} for session {session_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -255,6 +286,29 @@ async def complete_upload(session_id: str, db: Session = Depends(get_db)):
                     logger.info(f"Written part {part_num} ({len(data)} bytes) to final file for session {session_id}")
 
         logger.info(f"All parts assembled for session {session_id}")
+        
+        # Verify full file hash if provided
+        if session.file_hash:
+            logger.info(f"Verifying file integrity for session {session_id}")
+            file_sha256 = hashlib.sha256()
+            with open(final_path, "rb") as f:
+                while True:
+                    chunk = f.read(65536)  # 64KB chunks
+                    if not chunk:
+                        break
+                    file_sha256.update(chunk)
+            
+            computed_hash = file_sha256.hexdigest()
+            if computed_hash.lower() != session.file_hash.lower():
+                logger.error(f"File hash mismatch for session {session_id}: expected {session.file_hash}, got {computed_hash}")
+                session.status = "failed"
+                db.commit()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File integrity check failed. Hash mismatch."
+                )
+            logger.info(f"File hash verified: {computed_hash}")
+        
         # Update session status
         session.status = "completed"
         session.completed_at = datetime.now(timezone.utc)

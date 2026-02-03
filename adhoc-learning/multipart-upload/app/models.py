@@ -1,5 +1,5 @@
 """Database models for upload sessions."""
-from sqlalchemy import Column, String, BigInteger, Integer, ARRAY, TIMESTAMP
+from sqlalchemy import Column, String, BigInteger, Integer, ARRAY, TIMESTAMP, JSON
 from sqlalchemy.sql import func
 from database import Base
 
@@ -15,6 +15,12 @@ class UploadSession(Base):
     chunk_size = Column(Integer, nullable=False)
     total_parts = Column(Integer, nullable=False)
     completed_parts = Column(ARRAY(Integer), default=[])
+    
+    # Checksum fields
+    file_hash = Column(String(64), nullable=True)  # SHA256 of full file (hex string)
+    hash_algorithm = Column(String(20), default="SHA256")
+    part_hashes = Column(JSON, default={})  # {"1": "md5_hex", "2": "md5_hex", ...}
+    
     status = Column(String(20), default="in_progress", index=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
