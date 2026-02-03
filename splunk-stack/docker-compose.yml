@@ -16,6 +16,8 @@ services:
       - SPLUNK_PASSWORD=password123
       - SPLUNK_HEC_TOKEN=00000000-0000-0000-0000-000000000000
       - SPLUNK_USER=root
+      - TZ=Asia/Kolkata
+      - SPLUNK_TIMEZONE=Asia/Kolkata
     ports:
       - "18000:8000"
       - "8088:8088"
