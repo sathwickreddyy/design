@@ -4,12 +4,13 @@ import uuid
 import logging
 import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from pydantic import BaseModel
 
 from database import get_db, engine
@@ -148,10 +149,18 @@ async def upload_part(
         with open(part_path, "wb") as f:
             f.write(content)
         
-        # Update completed parts (idempotent: add only if not already present)
-        if part_number not in session.completed_parts:
-            session.completed_parts = session.completed_parts + [part_number]
-            db.commit()
+        # Update completed parts using SQL-level atomic operation
+        # This prevents race conditions when multiple parts upload simultaneously
+        db.execute(
+            text("""
+                UPDATE upload_sessions
+                SET completed_parts = array_append(completed_parts, :part_num)
+                WHERE session_id = :session_id
+                  AND NOT :part_num = ANY(completed_parts)
+            """),
+            {"session_id": session_id, "part_num": part_number}
+        )
+        db.commit()
         
         logger.info(f"Uploaded part {part_number}/{session.total_parts} for session {session_id}")
         
@@ -197,63 +206,79 @@ async def complete_upload(session_id: str, db: Session = Depends(get_db)):
     
     Assembles all parts into final file and cleans up temp storage.
     """
+    logger.info(f"Starting completion for upload session {session_id}")
     session = db.query(UploadSession).filter(UploadSession.session_id == session_id).first()
+    logger.info(f"Fetched session from DB: {bool(session)}")
     if not session:
+        logger.info(f"Session {session_id} not found, raising 404")
         raise HTTPException(status_code=404, detail="Upload session not found")
-    
+
     if session.status == "completed":
+        logger.info(f"Session {session_id} already completed")
         return CompleteUploadResponse(
             session_id=session_id,
             status="completed",
             file_path=f"{COMPLETED_UPLOAD_DIR}/{session.filename}",
             message="Upload already completed"
         )
-    
+
+    logger.info(f"Verifying all parts are uploaded for session {session_id}")
     # Verify all parts are uploaded
     if len(session.completed_parts) != session.total_parts:
         missing_parts = set(range(1, session.total_parts + 1)) - set(session.completed_parts)
+        logger.info(f"Missing parts for session {session_id}: {sorted(missing_parts)}")
         raise HTTPException(
             status_code=400,
             detail=f"Missing parts: {sorted(missing_parts)}"
         )
-    
+
     session_dir = Path(TEMP_UPLOAD_DIR) / session_id
     final_path = Path(COMPLETED_UPLOAD_DIR) / session.filename
-    
+    logger.info(f"Session dir: {session_dir}, Final path: {final_path}")
+
     try:
+        logger.info(f"Assembling parts for session {session_id}")
         # Assemble parts in order
         with open(final_path, "wb") as outfile:
             for part_num in range(1, session.total_parts + 1):
                 part_path = session_dir / f"part_{part_num}"
+                logger.info(f"Processing part {part_num}: {part_path}")
                 if not part_path.exists():
+                    logger.info(f"Part {part_num} file not found for session {session_id}")
                     raise HTTPException(
                         status_code=500,
                         detail=f"Part {part_num} file not found"
                     )
                 with open(part_path, "rb") as infile:
-                    outfile.write(infile.read())
-        
+                    data = infile.read()
+                    outfile.write(data)
+                    logger.info(f"Written part {part_num} ({len(data)} bytes) to final file for session {session_id}")
+
+        logger.info(f"All parts assembled for session {session_id}")
         # Update session status
         session.status = "completed"
-        session.completed_at = datetime.utcnow()
+        session.completed_at = datetime.now(timezone.utc)
         db.commit()
-        
+        logger.info(f"Session {session_id} marked as completed in DB")
+
         # Cleanup temp files
         shutil.rmtree(session_dir)
-        
+        logger.info(f"Cleaned up temp files for session {session_id}")
+
         logger.info(f"Completed upload for session {session_id}, file saved to {final_path}")
-        
+
         return CompleteUploadResponse(
             session_id=session_id,
             status="completed",
             file_path=str(final_path),
             message=f"File {session.filename} uploaded successfully"
         )
-    
+
     except Exception as e:
         logger.error(f"Failed to complete upload for session {session_id}: {e}")
         session.status = "failed"
         db.commit()
+        logger.info(f"Session {session_id} marked as failed in DB")
         raise HTTPException(status_code=500, detail=str(e))
 
 

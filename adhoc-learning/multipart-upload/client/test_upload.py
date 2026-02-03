@@ -158,6 +158,7 @@ def test_status_query():
                       f"({len(status['completed_parts'])}/{total_parts} parts)")
         
         print("\n✓ Test 4 PASSED: Status queries working correctly")
+        uploader.complete_upload(session_id)
     
     finally:
         os.unlink(test_file)
