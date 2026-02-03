@@ -3,7 +3,7 @@
 You are assisting a senior software engineer.
 
 ## Hard Constraints (Non-Negotiable)
-- ❌ Do NOT create new files unless I explicitly approve.
+- ❌ Do NOT create new files unless I explicitly approve most importantly markdown files.
 - ❌ Do NOT modify multiple files at once.
 - ❌ Do NOT auto-implement changes.
 - ❌ Do NOT use default bridge networks for Docker; always use the external observability-net.
