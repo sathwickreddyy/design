@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: sync-postgres
+    environment:
+      POSTGRES_DB: syncdb
+      POSTGRES_USER: syncuser
+      POSTGRES_PASSWORD: syncpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - observability-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U syncuser -d syncdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      com.project: "sync-conflict-resolver"
+      com.component: "database"
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  observability-net:
+    external: true
