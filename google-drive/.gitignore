@@ -48,6 +48,7 @@ Thumbs.db
 
 # Docker volumes
 postgres_data/
+minio_data/
 
 # Conflicted copies
 *conflicted*copy*.txt
