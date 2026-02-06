@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, String, Integer, LargeBinary, DateTime, select
+from sqlalchemy import Column, String, Integer, LargeBinary, DateTime, select, update
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from dotenv import load_dotenv
@@ -178,11 +178,9 @@ async def upload_file(file_id: str, request: FileUploadRequest):
     
     async with async_session_maker() as session:
         async with session.begin():
-            # Lock row for update (optimistic locking)
+            # First check if file exists (NO LOCK - pure read)
             result = await session.execute(
-                select(FileRecord)
-                .where(FileRecord.file_id == file_id)
-                .with_for_update()
+                select(FileRecord).where(FileRecord.file_id == file_id)
             )
             file_record = result.scalar_one_or_none()
             
@@ -212,18 +210,44 @@ async def upload_file(file_id: str, request: FileUploadRequest):
                     "content_hash": computed_hash
                 }
             
-            # **OPTIMISTIC LOCK CHECK**
-            if file_record.version != request.expected_version:
+            # **TRUE OPTIMISTIC LOCKING: Atomic UPDATE with WHERE version check**
+            # This updates ONLY if version matches - no row locks!
+            stmt = (
+                update(FileRecord)
+                .where(
+                    FileRecord.file_id == file_id,
+                    FileRecord.version == request.expected_version  # Atomic version check
+                )
+                .values(
+                    content=content_bytes,
+                    version=request.expected_version + 1,
+                    content_hash=computed_hash,
+                    updated_at=datetime.utcnow()
+                )
+            )
+            
+            result = await session.execute(stmt)
+            await session.commit()
+            
+            # Check if update actually happened (rowcount == 0 means version mismatch)
+            if result.rowcount == 0:
+                # Version changed between read and write - CONFLICT!
                 logger.warning(
                     f"⚠️ CONFLICT detected for {file_id}: "
-                    f"expected v{request.expected_version}, server has v{file_record.version}"
+                    f"expected v{request.expected_version}, but version changed during operation"
                 )
                 
+                # Re-fetch current state to return to client
+                result = await session.execute(
+                    select(FileRecord).where(FileRecord.file_id == file_id)
+                )
+                current_file = result.scalar_one()
+                
                 conflict_response = ConflictResponse(
-                    message=f"Version conflict: expected {request.expected_version}, server has {file_record.version}",
-                    current_version=file_record.version,
-                    server_content=file_record.content.decode('utf-8'),
-                    server_hash=file_record.content_hash
+                    message=f"Version conflict: expected {request.expected_version}, server has {current_file.version}",
+                    current_version=current_file.version,
+                    server_content=current_file.content.decode('utf-8'),
+                    server_hash=current_file.content_hash
                 )
                 
                 return JSONResponse(
@@ -231,19 +255,13 @@ async def upload_file(file_id: str, request: FileUploadRequest):
                     content=conflict_response.model_dump()
                 )
             
-            # Update file (version check passed)
-            file_record.content = content_bytes
-            file_record.version += 1
-            file_record.content_hash = computed_hash
-            file_record.updated_at = datetime.utcnow()
-            
-            await session.commit()
-            
-            logger.info(f"✅ Updated {file_id}: v{request.expected_version} → v{file_record.version}")
+            # Success - update applied atomically
+            new_version = request.expected_version + 1
+            logger.info(f"✅ Updated {file_id}: v{request.expected_version} → v{new_version}")
             return {
                 "status": "updated",
                 "file_id": file_id,
-                "version": file_record.version,
+                "version": new_version,
                 "content_hash": computed_hash
             }
 
