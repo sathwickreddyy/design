@@ -1,23 +1,31 @@
 # Sync Conflict Resolver
 
-File sync system demonstrating **Optimistic Concurrency Control** for conflict detection and resolution.
+File sync system demonstrating **Optimistic Concurrency Control** with **Object Storage Architecture** for conflict detection and resolution.
 
 ## 🎯 What This Demonstrates
 
 - **Offline Conflict:** Two clients edit while disconnected, then sync
 - **Online Conflict:** Two clients edit simultaneously (race condition)
-- **Optimistic Locking:** Version-based conflict detection
+- **Optimistic Locking:** Version-based conflict detection (no row locks!)
 - **Resolution Strategy:** Keep-both (conflicted copies)
+- **Production Architecture:** Metadata in Postgres, content in MinIO (S3-compatible)
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    SYNC SERVER (FastAPI)                    │
-│  - PostgreSQL with optimistic locking                       │
-│  - Version-based conflict detection                         │
-│  - SELECT FOR UPDATE for atomic checks                      │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                   SYNC SERVER (FastAPI)                      │
+│  ┌────────────────┐              ┌─────────────────┐        │
+│  │ PostgreSQL     │              │ MinIO (S3)      │        │
+│  │ (Metadata)     │              │ (File Content)  │        │
+│  │ - file_id      │              │ - Actual bytes  │        │
+│  │ - version      │◄──points to──┤ - Versioned     │        │
+│  │ - storage_key  │              │ - Scalable      │        │
+│  │ - content_hash │              │ - CDN-ready     │        │
+│  └────────────────┘              └─────────────────┘        │
+│  Optimistic locking:                                         │
+│  UPDATE WHERE version = expected (atomic, no locks!)         │
+└──────────────────────────────────────────────────────────────┘
                          ▲        ▲
                          │        │
            ┌─────────────┘        └─────────────┐
@@ -30,6 +38,31 @@ File sync system demonstrating **Optimistic Concurrency Control** for conflict d
 └──────────────────────┘           └──────────────────────────┘
 ```
 
+## 📁 Project Structure
+
+```
+google-drive/
+├── src/
+│   ├── core/
+│   │   ├── config.py          # Settings & environment
+│   │   └── database.py        # Database connection
+│   ├── models/
+│   │   └── database.py        # SQLAlchemy models
+│   ├── schemas/
+│   │   └── file.py            # Pydantic schemas
+│   ├── services/
+│   │   ├── storage.py         # MinIO operations
+│   │   └── file_sync.py       # Business logic
+│   ├── api/
+│   │   └── endpoints.py       # FastAPI routes
+│   └── main.py                # Application entry point
+├── demo_offline.py            # Offline conflict demo
+├── demo_online.py             # Online conflict demo
+├── sync_client.py             # Client library
+├── docker-compose.yml         # Postgres + MinIO
+└── requirements.txt           # Dependencies
+```
+
 ## 🚀 Setup & Run
 
 ### 1. Prerequisites
@@ -39,25 +72,81 @@ File sync system demonstrating **Optimistic Concurrency Control** for conflict d
 docker network create observability-net 2>/dev/null || true
 ```
 
-### 2. Start PostgreSQL
+### 2. Start Services (PostgreSQL + MinIO)
 
 ```bash
 docker-compose up -d
 ```
 
-Wait for database to be ready:
+Wait for services to be ready:
 ```bash
-docker-compose logs -f postgres
-# Wait for: "database system is ready to accept connections"
+docker-compose logs -f
+# Wait for "database system is ready" and MinIO health check
 ```
 
-### 3. Install Python Dependencies
+### 3. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 4. Start Sync Server
+
+```bash
+python -m src.main
+# Or with uvicorn directly:
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 5. Access Services
+
+- **API Server:** http://localhost:8000
+- **API Docs (Swagger):** http://localhost:8000/docs
+- **MinIO Console:** http://localhost:9001 (user: `minioadmin`, password: `minioadmin`)
+
+## 📝 API Endpoints
+
+### File Upload (Real endpoint for users)
+
+**POST /files/upload** - Upload actual files
+```bash
+curl -X POST "http://localhost:8000/files/upload" \
+  -F "file=@document.pdf" \
+  -F "file_id=docs/document.pdf" \
+  -F "expected_version=0"
+```
+
+- `file`: The actual file to upload (multipart/form-data)
+- `file_id`: Unique identifier (like a path: "docs/report.txt")
+- `expected_version`: 0 for new files, current version for updates
+
+**Response:**
+```json
+{
+  "status": "created",
+  "file_id": "docs/document.pdf",
+  "version": 1,
+  "content_hash": "abc123...",
+  "storage_key": "abc12345/docs/document.pdf/v1",
+  "size_bytes": 102400
+}
+```
+
+### Other Endpoints
+
+- **GET /files/** - List all files
+- **GET /files/{file_id}/metadata** - Get metadata only
+- **GET /files/{file_id}/download** - Download file (binary streaming)
+- **GET /files/{file_id}** - Get as text (for demo)
+- **POST /files/{file_id}** - Upload text content (legacy/demo)
+- **DELETE /files/{file_id}** - Delete file
+
+## 🧪 Run Conflict Demos
+
+### Offline Conflict
+
+```bash
+python demo_offline.py
 
 ```bash
 python sync_server.py

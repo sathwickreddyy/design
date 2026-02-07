@@ -1,0 +1,305 @@
+"""
+FastAPI endpoints for file sync operations
+"""
+import logging
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form
+from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+import io
+
+from src.core.database import get_db
+from src.schemas import (
+    FileUploadRequest,
+    FileMetadataResponse,
+    FileResponse,
+    ConflictResponse,
+    UploadSuccessResponse
+)
+from src.services import FileSyncService, storage_service
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/files", tags=["files"])
+
+
+@router.get("/", response_model=list[dict])
+async def list_files(db: Annotated[AsyncSession, Depends(get_db)]):
+    """List all files in the system (metadata only)"""
+    logger.info("📋 Listing all files")
+    files = await FileSyncService.list_all_files(db)
+    return [
+        {
+            "file_id": f.file_id,
+            "version": f.version,
+            "content_hash": f.content_hash,
+            "size_bytes": f.size_bytes,
+            "updated_at": f.updated_at.isoformat()
+        }
+        for f in files
+    ]
+
+
+@router.get("/{file_id}/metadata", response_model=FileMetadataResponse)
+async def get_file_metadata(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Get file metadata without downloading content"""
+    logger.info(f"📋 GET /files/{file_id}/metadata")
+    
+    file_record = await FileSyncService.get_file(db, file_id)
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileMetadataResponse(
+        file_id=file_record.file_id,
+        version=file_record.version,
+        content_hash=file_record.content_hash,
+        size_bytes=file_record.size_bytes,
+        mime_type=file_record.mime_type,
+        storage_key=file_record.storage_key,
+        updated_at=file_record.updated_at
+    )
+
+
+@router.get("/{file_id}/download")
+async def download_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Download file content (binary streaming)"""
+    logger.info(f"📥 GET /files/{file_id}/download")
+    
+    file_record = await FileSyncService.get_file(db, file_id)
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Download content from MinIO
+    try:
+        content = await FileSyncService.get_file_content(file_record)
+    except Exception as e:
+        logger.error(f"❌ Failed to download {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve file content")
+    
+    logger.info(f"✅ Downloading {file_id} v{file_record.version} ({file_record.size_bytes} bytes)")
+    
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=file_record.mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_id}"',
+            "X-File-Version": str(file_record.version),
+            "X-Content-Hash": file_record.content_hash
+        }
+    )
+
+
+@router.get("/{file_id}", response_model=FileResponse)
+async def get_file_text(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Get file content as text (for demo/text files)"""
+    logger.info(f"📥 GET /files/{file_id}")
+    
+    file_record = await FileSyncService.get_file(db, file_id)
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Download content
+    try:
+        content_bytes = await FileSyncService.get_file_content(file_record)
+    except Exception as e:
+        logger.error(f"❌ Failed to download {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve file content")
+    
+    return FileResponse(
+        file_id=file_record.file_id,
+        content=content_bytes.decode('utf-8'),
+        version=file_record.version,
+        content_hash=file_record.content_hash,
+        size_bytes=file_record.size_bytes,
+        updated_at=file_record.updated_at
+    )
+
+
+@router.post("/upload", response_model=UploadSuccessResponse, status_code=status.HTTP_201_CREATED)
+async def upload_file_multipart(
+    file: Annotated[UploadFile, File(description="File to upload")],
+    file_id: Annotated[str, Form(description="Unique file identifier (e.g., 'docs/report.txt')")],
+    expected_version: Annotated[int, Form(description="Expected current version (0 for new file)")],
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """
+    Upload file via multipart/form-data (Real upload endpoint for users)
+    
+    This is how users actually upload files to the system.
+    The server:
+    1. Receives the file
+    2. Stores it in MinIO
+    3. Updates metadata in PostgreSQL with optimistic locking
+    
+    For new files, use expected_version=0
+    For updates, provide the current version you have
+    """
+    logger.info(f"📤 POST /files/upload (file_id={file_id}, expected_version={expected_version})")
+    
+    # Read file content
+    content = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+    
+    # Check if file exists
+    existing_file = await FileSyncService.get_file(db, file_id)
+    
+    if not existing_file:
+        # Create new file
+        if expected_version != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="New file must have expected_version=0"
+            )
+        
+        file_record, storage_key = await FileSyncService.create_file(
+            db, file_id, content, mime_type
+        )
+        
+        return UploadSuccessResponse(
+            status="created",
+            file_id=file_record.file_id,
+            version=file_record.version,
+            content_hash=file_record.content_hash,
+            storage_key=storage_key,
+            size_bytes=file_record.size_bytes
+        )
+    
+    # Update existing file with optimistic locking
+    success, file_or_conflict, storage_key = await FileSyncService.update_file_optimistic(
+        db, file_id, content, expected_version
+    )
+    
+    if not success:
+        # CONFLICT! Return current version
+        current_file = file_or_conflict
+        
+        # Download current content for conflict response
+        try:
+            current_content = await FileSyncService.get_file_content(current_file)
+            current_content_str = current_content.decode('utf-8', errors='replace')
+        except Exception as e:
+            logger.error(f"❌ Failed to get conflict content: {e}")
+            current_content_str = "<binary content>"
+        
+        conflict_response = ConflictResponse(
+            message=f"Version conflict: expected {expected_version}, server has {current_file.version}",
+            current_version=current_file.version,
+            server_content=current_content_str[:1000],  # Limit size
+            server_hash=current_file.content_hash
+        )
+        
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=conflict_response.model_dump()
+        )
+    
+    # Success!
+    updated_file = file_or_conflict
+    return UploadSuccessResponse(
+        status="updated",
+        file_id=updated_file.file_id,
+        version=updated_file.version,
+        content_hash=updated_file.content_hash,
+        storage_key=storage_key,
+        size_bytes=updated_file.size_bytes
+    )
+
+
+@router.post("/{file_id}", response_model=UploadSuccessResponse)
+async def upload_file_text(
+    file_id: str,
+    request: FileUploadRequest,
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """
+    Upload file as text/JSON (Legacy endpoint for demos)
+    
+    Use /files/upload for real file uploads instead.
+    This endpoint is kept for backward compatibility with demo scripts.
+    """
+    logger.info(f"📤 POST /files/{file_id} (expected_version={request.expected_version})")
+    
+    content_bytes = request.content.encode('utf-8')
+    
+    # Check if file exists
+    existing_file = await FileSyncService.get_file(db, file_id)
+    
+    if not existing_file:
+        if request.expected_version != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="New file must have expected_version=0"
+            )
+        
+        file_record, storage_key = await FileSyncService.create_file(
+            db, file_id, content_bytes, "text/plain"
+        )
+        
+        return UploadSuccessResponse(
+            status="created",
+            file_id=file_record.file_id,
+            version=file_record.version,
+            content_hash=file_record.content_hash,
+            storage_key=storage_key,
+            size_bytes=file_record.size_bytes
+        )
+    
+    # Update with optimistic locking
+    try:
+        success, file_or_conflict, storage_key = await FileSyncService.update_file_optimistic(
+            db, file_id, content_bytes, request.expected_version, request.content_hash
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": "INTEGRITY_ERROR", "message": str(e)})
+    
+    if not success:
+        # CONFLICT!
+        current_file = file_or_conflict
+        
+        try:
+            current_content = await FileSyncService.get_file_content(current_file)
+            current_content_str = current_content.decode('utf-8')
+        except Exception:
+            current_content_str = "<content unavailable>"
+        
+        conflict_response = ConflictResponse(
+            message=f"Version conflict: expected {request.expected_version}, server has {current_file.version}",
+            current_version=current_file.version,
+            server_content=current_content_str,
+            server_hash=current_file.content_hash
+        )
+        
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=conflict_response.model_dump()
+        )
+    
+    # Success!
+    updated_file = file_or_conflict
+    return UploadSuccessResponse(
+        status="updated",
+        file_id=updated_file.file_id,
+        version=updated_file.version,
+        content_hash=updated_file.content_hash,
+        storage_key=storage_key,
+        size_bytes=updated_file.size_bytes
+    )
+
+
+@router.delete("/{file_id}")
+async def delete_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    """
+    Delete file metadata
+    
+    Note: With content-addressed storage, we only delete metadata.
+    The actual content remains in storage as other files may reference it.
+    In production, run garbage collection periodically to clean up orphaned content.
+    """
+    logger.info(f"🗑️ DELETE /files/{file_id}")
+    
+    success = await FileSyncService.delete_file(db, file_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return {"status": "deleted", "file_id": file_id}
