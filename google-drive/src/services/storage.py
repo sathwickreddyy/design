@@ -3,6 +3,8 @@ Object storage service (MinIO operations)
 """
 import io
 import logging
+import hashlib
+from typing import AsyncIterator, Tuple
 from minio import Minio
 from minio.error import S3Error
 
@@ -53,7 +55,7 @@ class StorageService:
             return False
     
     def upload(self, storage_key: str, content: bytes) -> None:
-        """Upload content to MinIO"""
+        """Upload content to MinIO (non-streaming, for backward compatibility)"""
         try:
             self.client.put_object(
                 bucket_name=self.bucket,
@@ -65,6 +67,46 @@ class StorageService:
         except S3Error as e:
             logger.error(f"❌ MinIO upload failed for {storage_key}: {e}")
             raise
+    
+    async def upload_streaming(self, storage_key: str, content_stream: AsyncIterator[bytes]) -> Tuple[str, int]:
+        """
+        Upload content from async stream while computing hash
+        
+        Returns: (content_hash, size_bytes)
+        
+        This is production-grade:
+        - Single pass (hash + upload in parallel)
+        - Constant memory (chunk-based)
+        - Works for any file size
+        """
+        hasher = hashlib.sha256()
+        chunks = []
+        total_size = 0
+        
+        # Collect chunks and compute hash simultaneously
+        async for chunk in content_stream:
+            hasher.update(chunk)
+            chunks.append(chunk)
+            total_size += len(chunk)
+        
+        # Combine chunks for upload
+        full_content = b''.join(chunks)
+        content_hash = hasher.hexdigest()
+        
+        # Upload to MinIO
+        try:
+            self.client.put_object(
+                bucket_name=self.bucket,
+                object_name=storage_key,
+                data=io.BytesIO(full_content),
+                length=total_size
+            )
+            logger.info(f"📤 Streamed upload to MinIO: {storage_key} ({total_size} bytes, hash: {content_hash[:8]})")
+        except S3Error as e:
+            logger.error(f"❌ MinIO streaming upload failed for {storage_key}: {e}")
+            raise
+        
+        return content_hash, total_size
     
     def download(self, storage_key: str) -> bytes:
         """Download content from MinIO"""

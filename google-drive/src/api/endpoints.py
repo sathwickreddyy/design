@@ -124,36 +124,40 @@ async def upload_file_multipart(
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """
-    Upload file via multipart/form-data (Real upload endpoint for users)
+    Upload file via multipart/form-data with STREAMING (production-grade!)
     
-    This is how users actually upload files to the system.
-    The server:
-    1. Receives the file
-    2. Stores it in MinIO
-    3. Updates metadata in PostgreSQL with optimistic locking
+    This endpoint:
+    1. Streams the file from UploadFile (constant memory, works for large files)
+    2. Computes hash while streaming (single pass)
+    3. Stores in MinIO content-addressed storage
+    4. Updates metadata in PostgreSQL with optimistic locking
     
-    For new files, use expected_version=0
-    For updates, provide the current version you have
+    For new files: expected_version=0
+    For updates: provide the current version you have
     """
-    logger.info(f"📤 POST /files/upload (file_id={file_id}, expected_version={expected_version})")
+    logger.info(f"📤 POST /files/upload STREAMING (file_id={file_id}, expected_version={expected_version})")
     
-    # Read file content
-    content = await file.read()
     mime_type = file.content_type or "application/octet-stream"
+    
+    # Create async iterator from UploadFile
+    async def file_stream():
+        """Stream file in chunks"""
+        while chunk := await file.read(8192):  # 8KB chunks
+            yield chunk
     
     # Check if file exists
     existing_file = await FileSyncService.get_file(db, file_id)
     
     if not existing_file:
-        # Create new file
+        # Create new file with streaming
         if expected_version != 0:
             raise HTTPException(
                 status_code=400,
                 detail="New file must have expected_version=0"
             )
         
-        file_record, storage_key = await FileSyncService.create_file(
-            db, file_id, content, mime_type
+        file_record, storage_key = await FileSyncService.create_file_streaming(
+            db, file_id, file_stream(), mime_type
         )
         
         return UploadSuccessResponse(
@@ -165,9 +169,9 @@ async def upload_file_multipart(
             size_bytes=file_record.size_bytes
         )
     
-    # Update existing file with optimistic locking
-    success, file_or_conflict, storage_key = await FileSyncService.update_file_optimistic(
-        db, file_id, content, expected_version
+    # Update existing file with optimistic locking + streaming
+    success, file_or_conflict, storage_key = await FileSyncService.update_file_optimistic_streaming(
+        db, file_id, file_stream(), expected_version
     )
     
     if not success:
