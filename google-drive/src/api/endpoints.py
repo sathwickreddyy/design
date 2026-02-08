@@ -9,15 +9,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import io
 
-from src.core.database import get_db
-from src.schemas import (
+from ..core.database import get_db
+from ..schemas import (
     FileUploadRequest,
     FileMetadataResponse,
     FileResponse,
     ConflictResponse,
     UploadSuccessResponse
 )
-from src.services import FileSyncService, storage_service
+from ..services import FileSyncService, storage_service
 
 logger = logging.getLogger(__name__)
 

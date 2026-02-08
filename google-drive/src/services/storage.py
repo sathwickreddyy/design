@@ -8,7 +8,7 @@ from typing import AsyncIterator, Tuple
 from minio import Minio
 from minio.error import S3Error
 
-from src.core.config import settings
+from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 

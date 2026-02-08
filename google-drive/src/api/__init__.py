@@ -1,4 +1,4 @@
 """API module exports"""
-from src.api.endpoints import router
+from .endpoints import router
 
 __all__ = ["router"]

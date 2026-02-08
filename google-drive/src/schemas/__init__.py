@@ -1,5 +1,5 @@
 """Schemas module exports"""
-from src.schemas.file import (
+from .file import (
     FileUploadRequest,
     FileMetadataResponse,
     FileResponse,

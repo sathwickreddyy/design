@@ -7,9 +7,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.core import Base, engine, settings
-from src.api import router
-from src.services import storage_service
+from .core import Base, engine, settings
+from .api import router
+from .services import storage_service
 
 # Configure logging
 logging.basicConfig(

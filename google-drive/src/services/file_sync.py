@@ -10,8 +10,8 @@ import io
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models import FileRecord
-from src.services.storage import storage_service
+from ..models import FileRecord
+from .storage import storage_service
 
 logger = logging.getLogger(__name__)
 
