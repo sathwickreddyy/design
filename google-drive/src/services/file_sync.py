@@ -100,19 +100,19 @@ class FileSyncService:
         # Now we know the hash, generate final storage key
         storage_key = storage_service.generate_storage_key(content_hash)
         
-        # Check if content already exists (deduplication!)
-        if storage_service.exists(storage_key):
-            # Delete temp, reuse existing
-            storage_service.delete(temp_storage_key)
-            logger.info(f"♻️ Content already exists, reusing: {storage_key}")
-        else:
-            # Move temp to final location (or keep temp as final if hash matches)
+        # **IMPORTANT**: Always move from temp to final location
+        # Check if content already exists (deduplication - skip upload if exists)
+        if not storage_service.exists(storage_key):
+            # Content doesn't exist → move temp to content-addressed location
             if temp_storage_key != storage_key:
-                # Copy to content-addressed location
                 content = storage_service.download(temp_storage_key)
                 storage_service.upload(storage_key, content)
-                storage_service.delete(temp_storage_key)
+            storage_service.delete(temp_storage_key)
             logger.info(f"📤 Uploaded new streaming content: {storage_key} ({size_bytes} bytes)")
+        else:
+            # Content already exists (dedup case) → delete temp without moving
+            storage_service.delete(temp_storage_key)
+            logger.info(f"♻️ Content already exists, reusing: {storage_key}")
         
         # Create metadata record
         file_record = FileRecord(
@@ -291,17 +291,18 @@ class FileSyncService:
         # **STEP 4: Generate content-addressed key and handle deduplication**
         storage_key = storage_service.generate_storage_key(content_hash)
         
-        if storage_service.exists(storage_key):
-            # Delete temp, reuse existing
-            storage_service.delete(temp_storage_key)
-            logger.info(f"♻️ Content already exists, reusing: {storage_key}")
-        else:
-            # Move temp to final content-addressed location
+        # **IMPORTANT**: Always move from temp to final location
+        if not storage_service.exists(storage_key):
+            # Content doesn't exist → move temp to content-addressed location
             if temp_storage_key != storage_key:
                 content = storage_service.download(temp_storage_key)
                 storage_service.upload(storage_key, content)
-                storage_service.delete(temp_storage_key)
+            storage_service.delete(temp_storage_key)
             logger.info(f"📤 Uploaded new streaming content: {storage_key} ({size_bytes} bytes)")
+        else:
+            # Content already exists (dedup) → delete temp without moving
+            storage_service.delete(temp_storage_key)
+            logger.info(f"♻️ Content already exists, reusing: {storage_key}")
         
         # **STEP 5: Update FileRecord with version increment**
         existing.version = new_version

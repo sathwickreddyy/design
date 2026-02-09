@@ -4,7 +4,7 @@ FastAPI endpoints for file sync operations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form, Path
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import io
@@ -41,8 +41,8 @@ async def list_files(db: Annotated[AsyncSession, Depends(get_db)]):
     ]
 
 
-@router.get("/{file_id}/metadata", response_model=FileMetadataResponse)
-async def get_file_metadata(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.get("/{file_id:path}/metadata", response_model=FileMetadataResponse)
+async def get_file_metadata(file_id: Annotated[str, Path()], db: Annotated[AsyncSession, Depends(get_db)]):
     """Get file metadata without downloading content"""
     logger.info(f"📋 GET /files/{file_id}/metadata")
     
@@ -61,9 +61,9 @@ async def get_file_metadata(file_id: str, db: Annotated[AsyncSession, Depends(ge
     )
 
 
-@router.get("/{file_id}/download")
-async def download_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
-    """Download file content (binary streaming)"""
+@router.get("/{file_id:path}/download")
+async def download_file(file_id: Annotated[str, Path()], db: Annotated[AsyncSession, Depends(get_db)]):
+    """Download file content (binary streaming) - supports file_ids with slashes like 'videos/file.mp4'"""
     logger.info(f"📥 GET /files/{file_id}/download")
     
     file_record = await FileSyncService.get_file(db, file_id)
@@ -83,15 +83,15 @@ async def download_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db
         io.BytesIO(content),
         media_type=file_record.mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{file_id}"',
+            "Content-Disposition": f'attachment; filename="{file_id.split("/")[-1]}"',
             "X-File-Version": str(file_record.version),
             "X-Content-Hash": file_record.content_hash
         }
     )
 
 
-@router.get("/{file_id}", response_model=FileResponse)
-async def get_file_text(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.get("/{file_id:path}", response_model=FileResponse)
+async def get_file_text(file_id: Annotated[str, Path()], db: Annotated[AsyncSession, Depends(get_db)]):
     """Get file content as text (for demo/text files)"""
     logger.info(f"📥 GET /files/{file_id}")
     
@@ -210,9 +210,9 @@ async def upload_file_multipart(
     )
 
 
-@router.post("/{file_id}", response_model=UploadSuccessResponse)
+@router.post("/{file_id:path}", response_model=UploadSuccessResponse)
 async def upload_file_text(
-    file_id: str,
+    file_id: Annotated[str, Path()],
     request: FileUploadRequest,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
@@ -291,8 +291,8 @@ async def upload_file_text(
     )
 
 
-@router.delete("/{file_id}")
-async def delete_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.delete("/{file_id:path}")
+async def delete_file(file_id: Annotated[str, Path()], db: Annotated[AsyncSession, Depends(get_db)]):
     """
     Delete file metadata
     
@@ -309,8 +309,8 @@ async def delete_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]
     return {"status": "deleted", "file_id": file_id}
 
 
-@router.get("/{file_id}/history", response_model=list[dict])
-async def get_file_version_history(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.get("/{file_id:path}/history", response_model=list[dict])
+async def get_file_version_history(file_id: Annotated[str, Path()], db: Annotated[AsyncSession, Depends(get_db)]):
     """
     Get complete version history for a file
     
@@ -348,9 +348,9 @@ async def get_file_version_history(file_id: str, db: Annotated[AsyncSession, Dep
     ]
 
 
-@router.get("/{file_id}/version/{version_number}")
+@router.get("/{file_id:path}/version/{version_number}")
 async def get_file_version_content(
-    file_id: str,
+    file_id: Annotated[str, Path()],
     version_number: int,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
@@ -414,9 +414,9 @@ async def get_file_version_content(
     )
 
 
-@router.post("/{file_id}/rollback/{version_number}")
+@router.post("/{file_id:path}/rollback/{version_number}")
 async def rollback_to_version(
-    file_id: str,
+    file_id: Annotated[str, Path()],
     version_number: int,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
