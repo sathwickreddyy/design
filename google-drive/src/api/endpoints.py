@@ -83,11 +83,24 @@ async def download_file(file_id: Annotated[str, Path()], db: Annotated[AsyncSess
     
     # Create async generator that streams from MinIO
     async def stream_from_minio():
-        """Stream file chunks from MinIO (constant memory usage via thread pool)"""
+        """
+        Stream file chunks from MinIO with constant memory usage via thread pool.
+        
+        Key pattern (response types):
+        1. await loop.run_in_executor(..., get_object, ...) → returns HTTPResponse stream object (~0 bytes)
+           This is just metadata, not the actual file data
+        2. await loop.run_in_executor(..., response.read, 8192) → returns bytes chunk (~8192 bytes)
+           This is the actual file data for this iteration
+        
+        Why await each read()? 
+        Each response.read() is a blocking call. By submitting it to executor thread pool,
+        the event loop stays FREE and can handle other concurrent requests (other downloads, DB queries, etc)
+        Without this, the event loop would freeze while waiting for each read() to complete.
+        """
         import asyncio
         response = None
         try:
-            # Run sync MinIO call in thread pool to avoid blocking event loop
+            # Get stream object from MinIO (returns HTTPResponse, not file data)
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
@@ -96,9 +109,9 @@ async def download_file(file_id: Annotated[str, Path()], db: Annotated[AsyncSess
                 file_record.storage_key
             )
             
-            # Yield chunks (8KB per iteration)
+            # Yield chunks (8KB per iteration) - EACH read in executor to keep event loop free
             while True:
-                chunk = response.read(8192)
+                chunk = await loop.run_in_executor(None, response.read, 8192)
                 if not chunk:
                     break
                 yield chunk
@@ -436,11 +449,24 @@ async def get_file_version_content(
     
     # Create async generator that streams from MinIO
     async def stream_from_minio():
-        """Stream file chunks from MinIO (constant memory usage via thread pool)"""
+        """
+        Stream file chunks from MinIO with constant memory usage via thread pool.
+        
+        Key pattern (response types):
+        1. await loop.run_in_executor(..., get_object, ...) → returns HTTPResponse stream object (~0 bytes)
+           This is just metadata, not the actual file data
+        2. await loop.run_in_executor(..., response.read, 8192) → returns bytes chunk (~8192 bytes)
+           This is the actual file data for this iteration
+        
+        Why await each read()? 
+        Each response.read() is a blocking call. By submitting it to executor thread pool,
+        the event loop stays FREE and can handle other concurrent requests (other downloads, DB queries, etc)
+        Without this, the event loop would freeze while waiting for each read() to complete.
+        """
         import asyncio
         response = None
         try:
-            # Run sync MinIO call in thread pool to avoid blocking event loop
+            # Get stream object from MinIO (returns HTTPResponse, not file data)
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
@@ -449,9 +475,9 @@ async def get_file_version_content(
                 storage_key
             )
             
-            # Yield chunks (8KB per iteration)
+            # Yield chunks (8KB per iteration) - EACH read in executor to keep event loop free
             while True:
-                chunk = response.read(8192)
+                chunk = await loop.run_in_executor(None, response.read, 8192)
                 if not chunk:
                     break
                 yield chunk
