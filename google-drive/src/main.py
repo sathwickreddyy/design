@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .core import Base, engine, settings
 from .api import router
@@ -59,6 +60,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Add Gzip compression middleware
+# Automatically compresses responses > 1KB when client sends Accept-Encoding: gzip
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,  # Only compress responses larger than 1KB
+    compresslevel=6     # Compression level 1-9 (6 = balanced speed/compression)
 )
 
 # Include routers
