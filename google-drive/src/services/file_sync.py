@@ -10,7 +10,7 @@ import io
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import FileRecord
+from ..models import FileRecord, FileVersionHistory
 from .storage import storage_service
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,33 @@ class FileSyncService:
         return file_record, storage_key
     
     @staticmethod
+    async def _save_to_version_history(
+        session: AsyncSession,
+        file_id: str,
+        version: int,
+        content_hash: str,
+        storage_key: str,
+        size_bytes: int,
+        mime_type: str
+    ) -> None:
+        """
+        Save current file state to version history (internal helper)
+        
+        Called before updating to latest version - preserves complete audit trail.
+        """
+        history_entry = FileVersionHistory(
+            file_id=file_id,
+            version=version,
+            content_hash=content_hash,
+            storage_key=storage_key,
+            size_bytes=size_bytes,
+            mime_type=mime_type
+        )
+        session.add(history_entry)
+        await session.flush()  # Don't commit yet - let caller manage transaction
+        logger.info(f"📚 Saved to version history: {file_id} v{version}")
+    
+    @staticmethod
     async def update_file_optimistic(
         session: AsyncSession,
         file_id: str,
@@ -143,8 +170,10 @@ class FileSyncService:
         Flow:
         1. Compute hash of new content
         2. Check version FIRST (atomic, before uploading)
-        3. Only if version matches → upload to MinIO
-        4. If conflict → no upload (efficient!)
+        3. Save OLD version to history
+        4. Only if version matches → upload to MinIO
+        5. Update FileRecord with new version
+        6. If conflict → no upload (efficient!)
         
         Returns: (success, file_record_or_conflict, storage_key)
         - If success: (True, updated_record, storage_key)
@@ -160,54 +189,52 @@ class FileSyncService:
         # Generate content-addressed storage key (just the hash)
         storage_key = storage_service.generate_storage_key(computed_hash)
         
-        # **STEP 1: Atomic version check FIRST (before any upload)**
-        stmt = (
-            update(FileRecord)
-            .where(
-                FileRecord.file_id == file_id,
-                FileRecord.version == expected_version  # Atomic version check
-            )
-            .values(
-                storage_key=storage_key,
-                version=new_version,
-                content_hash=computed_hash,
-                size_bytes=len(content),
-                updated_at=datetime.utcnow()
-            )
-        )
-        
-        result = await session.execute(stmt)
-        await session.commit()
-        
-        # Check if update actually happened (rowcount == 0 means version mismatch)
-        if result.rowcount == 0:
-            # CONFLICT! No upload needed (efficient!)
-            logger.warning(f"⚠️ CONFLICT for {file_id}: expected v{expected_version}")
-            
-            # Fetch current state
-            result = await session.execute(
-                select(FileRecord).where(FileRecord.file_id == file_id)
-            )
-            current_file = result.scalar_one()
-            return False, current_file, None
-        
-        # **STEP 2: Only upload to MinIO if version check PASSED**
-        # Content-addressed: skip upload if already exists (deduplication!)
-        if not storage_service.exists(storage_key):
-            storage_service.upload(storage_key, content)
-            logger.info(f"📤 Uploaded new content: {storage_key} ({len(content)} bytes)")
-        else:
-            logger.info(f"♻️ Content already exists, reusing: {storage_key}")
-        
-        # Success!
-        logger.info(f"✅ Updated {file_id}: v{expected_version} → v{new_version} (hash: {computed_hash[:8]})")
-        
-        # Fetch updated record
+        # **STEP 1: Fetch current file to check version + save to history**
         result = await session.execute(
             select(FileRecord).where(FileRecord.file_id == file_id)
         )
-        updated_file = result.scalar_one()
-        return True, updated_file, storage_key
+        existing = result.scalar_one_or_none()
+        
+        if not existing:
+            raise ValueError(f"File {file_id} not found")
+        
+        # **STEP 2: Check version match**
+        if existing.version != expected_version:
+            logger.warning(f"⚠️ CONFLICT for {file_id}: expected v{expected_version}, current v{existing.version}")
+            return False, existing, None
+        
+        # **STEP 3: Save CURRENT version to history BEFORE updating**
+        await FileSyncService._save_to_version_history(
+            session,
+            file_id=existing.file_id,
+            version=existing.version,
+            content_hash=existing.content_hash,
+            storage_key=existing.storage_key,
+            size_bytes=existing.size_bytes,
+            mime_type=existing.mime_type
+        )
+        
+        # **STEP 4: Upload new content if needed**
+        if not storage_service.exists(storage_key):
+            storage_service.upload(storage_key, content)
+            logger.info(f"📤 Uploaded new content: {storage_key}")
+        else:
+            logger.info(f"♻️ Reusing existing content: {storage_key}")
+        
+        # **STEP 5: Update FileRecord with new version**
+        existing.version = new_version
+        existing.storage_key = storage_key
+        existing.content_hash = computed_hash
+        existing.size_bytes = len(content)
+        existing.updated_at = datetime.utcnow()
+        
+        await session.commit()
+        
+        logger.info(
+            f"✅ Updated {file_id}: v{expected_version} → v{new_version} "
+            f"(hash: {computed_hash[:8]})"
+        )
+        return True, existing, storage_key
     
     @staticmethod
     async def update_file_optimistic_streaming(
@@ -242,7 +269,18 @@ class FileSyncService:
             logger.warning(f"⚠️ CONFLICT for {file_id}: expected v{expected_version}, current v{existing.version}")
             return False, existing, None
         
-        # **STEP 2: Stream to temp location (hash computed in parallel)**
+        # **STEP 2: Save CURRENT version to history BEFORE streaming new version**
+        await FileSyncService._save_to_version_history(
+            session,
+            file_id=existing.file_id,
+            version=existing.version,
+            content_hash=existing.content_hash,
+            storage_key=existing.storage_key,
+            size_bytes=existing.size_bytes,
+            mime_type=existing.mime_type
+        )
+        
+        # **STEP 3: Stream to temp location (hash computed in parallel)**
         new_version = expected_version + 1
         temp_storage_key = f"temp/{file_id}_v{new_version}"
         content_hash, size_bytes = await storage_service.upload_streaming(
@@ -250,7 +288,7 @@ class FileSyncService:
             content_stream
         )
         
-        # **STEP 3: Generate content-addressed key and handle deduplication**
+        # **STEP 4: Generate content-addressed key and handle deduplication**
         storage_key = storage_service.generate_storage_key(content_hash)
         
         if storage_service.exists(storage_key):
@@ -265,47 +303,20 @@ class FileSyncService:
                 storage_service.delete(temp_storage_key)
             logger.info(f"📤 Uploaded new streaming content: {storage_key} ({size_bytes} bytes)")
         
-        # **STEP 4: Update metadata with version increment**
-        stmt = (
-            update(FileRecord)
-            .where(
-                FileRecord.file_id == file_id,
-                FileRecord.version == expected_version  # Double-check version hasn't changed
-            )
-            .values(
-                storage_key=storage_key,
-                version=new_version,
-                content_hash=content_hash,
-                size_bytes=size_bytes,
-                updated_at=datetime.utcnow()
-            )
-        )
+        # **STEP 5: Update FileRecord with version increment**
+        existing.version = new_version
+        existing.storage_key = storage_key
+        existing.content_hash = content_hash
+        existing.size_bytes = size_bytes
+        existing.updated_at = datetime.utcnow()
         
-        result = await session.execute(stmt)
         await session.commit()
         
-        if result.rowcount == 0:
-            # Race condition: version changed during upload
-            # Clean up uploaded content (if unique)
-            logger.error(f"❌ Race condition for {file_id}: version changed during upload")
-            # Note: In production, you'd have garbage collection handle this
-            
-            # Return current state
-            result = await session.execute(
-                select(FileRecord).where(FileRecord.file_id == file_id)
-            )
-            current_file = result.scalar_one()
-            return False, current_file, None
-        
-        # Success!
-        logger.info(f"✅ Updated {file_id}: v{expected_version} → v{new_version} (streaming, hash: {content_hash[:8]})")
-        
-        # Fetch updated record
-        result = await session.execute(
-            select(FileRecord).where(FileRecord.file_id == file_id)
+        logger.info(
+            f"✅ Updated {file_id}: v{expected_version} → v{new_version} "
+            f"(streaming, hash: {content_hash[:8]})"
         )
-        updated_file = result.scalar_one()
-        return True, updated_file, storage_key
+        return True, existing, storage_key
     
     @staticmethod
     async def get_file(session: AsyncSession, file_id: str) -> Optional[FileRecord]:

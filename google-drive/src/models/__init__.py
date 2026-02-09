@@ -1,4 +1,4 @@
 """Models module exports"""
-from .database import FileRecord
+from .database import FileRecord, FileVersionHistory
 
-__all__ = ["FileRecord"]
+__all__ = ["FileRecord", "FileVersionHistory"]

@@ -307,3 +307,187 @@ async def delete_file(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]
         raise HTTPException(status_code=404, detail="File not found")
     
     return {"status": "deleted", "file_id": file_id}
+
+
+@router.get("/{file_id}/history", response_model=list[dict])
+async def get_file_version_history(file_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    """
+    Get complete version history for a file
+    
+    Returns all versions ever created, ordered by version number.
+    Enables viewing past versions and understanding change history.
+    """
+    logger.info(f"📚 GET /files/{file_id}/history")
+    
+    # Verify file exists
+    file_record = await FileSyncService.get_file(db, file_id)
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Get all historical versions
+    from sqlalchemy import select
+    from src.models import FileVersionHistory
+    
+    result = await db.execute(
+        select(FileVersionHistory)
+        .where(FileVersionHistory.file_id == file_id)
+        .order_by(FileVersionHistory.version.asc())
+    )
+    
+    history = result.scalars().all()
+    
+    return [
+        {
+            "version": h.version,
+            "content_hash": h.content_hash,
+            "size_bytes": h.size_bytes,
+            "mime_type": h.mime_type,
+            "created_at": h.created_at.isoformat()
+        }
+        for h in history
+    ]
+
+
+@router.get("/{file_id}/version/{version_number}")
+async def get_file_version_content(
+    file_id: str,
+    version_number: int,
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """
+    Download a specific historical version of a file
+    
+    Access any past version by version number.
+    """
+    logger.info(f"📥 GET /files/{file_id}/version/{version_number}")
+    
+    from sqlalchemy import select
+    from src.models import FileVersionHistory
+    
+    # Check if it's the current version
+    current_file = await FileSyncService.get_file(db, file_id)
+    if not current_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if current_file.version == version_number:
+        # Return current version
+        storage_key = current_file.storage_key
+        content_hash = current_file.content_hash
+        mime_type = current_file.mime_type
+        size_bytes = current_file.size_bytes
+    else:
+        # Look in history
+        result = await db.execute(
+            select(FileVersionHistory)
+            .where(
+                FileVersionHistory.file_id == file_id,
+                FileVersionHistory.version == version_number
+            )
+        )
+        history_entry = result.scalar_one_or_none()
+        
+        if not history_entry:
+            raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
+        
+        storage_key = history_entry.storage_key
+        content_hash = history_entry.content_hash
+        mime_type = history_entry.mime_type
+        size_bytes = history_entry.size_bytes
+    
+    # Download from MinIO
+    try:
+        content = storage_service.download(storage_key)
+    except Exception as e:
+        logger.error(f"❌ Failed to download {file_id} v{version_number}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve file content")
+    
+    logger.info(f"✅ Downloaded {file_id} v{version_number} ({size_bytes} bytes)")
+    
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_id}_v{version_number}"',
+            "X-File-Version": str(version_number),
+            "X-Content-Hash": content_hash
+        }
+    )
+
+
+@router.post("/{file_id}/rollback/{version_number}")
+async def rollback_to_version(
+    file_id: str,
+    version_number: int,
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """
+    Rollback file to a specific historical version
+    
+    This creates a new version (increment) that matches the content of the specified version.
+    """
+    logger.info(f"🔄 POST /files/{file_id}/rollback/{version_number}")
+    
+    from sqlalchemy import select
+    from src.models import FileVersionHistory
+    
+    current_file = await FileSyncService.get_file(db, file_id)
+    if not current_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Find the version to rollback to
+    if current_file.version == version_number:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Already at version {version_number}"
+        )
+    
+    if current_file.version > version_number:
+        # It's in history
+        result = await db.execute(
+            select(FileVersionHistory)
+            .where(
+                FileVersionHistory.file_id == file_id,
+                FileVersionHistory.version == version_number
+            )
+        )
+        history_entry = result.scalar_one_or_none()
+        
+        if not history_entry:
+            raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
+        
+        rollback_storage_key = history_entry.storage_key
+        rollback_hash = history_entry.content_hash
+        rollback_size = history_entry.size_bytes
+        rollback_mime = history_entry.mime_type
+    else:
+        # Future version doesn't exist
+        raise HTTPException(status_code=404, detail=f"Version {version_number} not found (beyond current)")
+    
+    # Download the old version content
+    try:
+        old_content = storage_service.download(rollback_storage_key)
+    except Exception as e:
+        logger.error(f"❌ Failed to rollback {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve version content")
+    
+    # Create new version from old content (as bytes)
+    success, updated_file, storage_key = await FileSyncService.update_file_optimistic(
+        db,
+        file_id=file_id,
+        content=old_content,
+        expected_version=current_file.version,
+        content_hash_provided=None
+    )
+    
+    if not success:
+        raise HTTPException(status_code=409, detail="Version conflict during rollback")
+    
+    logger.info(f"✅ Rolled back {file_id} to v{version_number} → now v{updated_file.version}")
+    
+    return {
+        "status": "rolled_back",
+        "file_id": file_id,
+        "from_version": version_number,
+        "to_version": updated_file.version,
+        "content_hash": updated_file.content_hash
+    }
