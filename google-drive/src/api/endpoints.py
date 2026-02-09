@@ -3,6 +3,7 @@ FastAPI endpoints for file sync operations
 """
 import logging
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form, Path
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -63,29 +64,63 @@ async def get_file_metadata(file_id: Annotated[str, Path()], db: Annotated[Async
 
 @router.get("/{file_id:path}/download")
 async def download_file(file_id: Annotated[str, Path()], db: Annotated[AsyncSession, Depends(get_db)]):
-    """Download file content (binary streaming) - supports file_ids with slashes like 'videos/file.mp4'"""
+    """
+    Download file content (binary streaming) - supports file_ids with slashes like 'videos/file.mp4'
+    
+    Features:
+    - Streams content directly from MinIO (constant memory, works for large files)
+    - Includes Content-Length for progress tracking
+    - Uses ETag for caching/conditional requests
+    - Sanitizes filename for safe HTTP headers
+    """
     logger.info(f"📥 GET /files/{file_id}/download")
     
     file_record = await FileSyncService.get_file(db, file_id)
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Download content from MinIO
-    try:
-        content = await FileSyncService.get_file_content(file_record)
-    except Exception as e:
-        logger.error(f"❌ Failed to download {file_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve file content")
+    logger.info(f"✅ Streaming {file_id} v{file_record.version} ({file_record.size_bytes} bytes)")
     
-    logger.info(f"✅ Downloading {file_id} v{file_record.version} ({file_record.size_bytes} bytes)")
+    # Create async generator that streams from MinIO
+    async def stream_from_minio():
+        """Stream file chunks from MinIO (constant memory usage via thread pool)"""
+        import asyncio
+        response = None
+        try:
+            # Run sync MinIO call in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                storage_service.client.get_object,
+                storage_service.bucket,
+                file_record.storage_key
+            )
+            
+            # Yield chunks (8KB per iteration)
+            while True:
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        except Exception as e:
+            logger.error(f"❌ Streaming error for {file_id}: {e}")
+            raise
+        finally:
+            if response:
+                response.close()
+    
+    # Sanitize filename for HTTP header
+    safe_filename = quote(file_id.split("/")[-1], safe='')
     
     return StreamingResponse(
-        io.BytesIO(content),
+        stream_from_minio(),
         media_type=file_record.mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{file_id.split("/")[-1]}"',
+            "Content-Disposition": f'attachment; filename="{safe_filename}"',
+            "Content-Length": str(file_record.size_bytes),  # For progress tracking
             "X-File-Version": str(file_record.version),
-            "X-Content-Hash": file_record.content_hash
+            "ETag": f'"{file_record.content_hash}"',  # For caching
+            "Cache-Control": "public, max-age=31536000",  # Cache 1 year (content is immutable)
         }
     )
 
@@ -357,7 +392,10 @@ async def get_file_version_content(
     """
     Download a specific historical version of a file
     
-    Access any past version by version number.
+    Features:
+    - Stream directly from MinIO (constant memory)
+    - Includes Content-Length and ETag headers
+    - Safe filename handling
     """
     logger.info(f"📥 GET /files/{file_id}/version/{version_number}")
     
@@ -394,22 +432,48 @@ async def get_file_version_content(
         mime_type = history_entry.mime_type
         size_bytes = history_entry.size_bytes
     
-    # Download from MinIO
-    try:
-        content = storage_service.download(storage_key)
-    except Exception as e:
-        logger.error(f"❌ Failed to download {file_id} v{version_number}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve file content")
+    logger.info(f"✅ Streaming {file_id} v{version_number} ({size_bytes} bytes)")
     
-    logger.info(f"✅ Downloaded {file_id} v{version_number} ({size_bytes} bytes)")
+    # Create async generator that streams from MinIO
+    async def stream_from_minio():
+        """Stream file chunks from MinIO (constant memory usage via thread pool)"""
+        import asyncio
+        response = None
+        try:
+            # Run sync MinIO call in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                storage_service.client.get_object,
+                storage_service.bucket,
+                storage_key
+            )
+            
+            # Yield chunks (8KB per iteration)
+            while True:
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        except Exception as e:
+            logger.error(f"❌ Streaming error for {file_id} v{version_number}: {e}")
+            raise
+        finally:
+            if response:
+                response.close()
+    
+    # Sanitize filename
+    safe_filename = quote(file_id.split("/")[-1], safe='')
     
     return StreamingResponse(
-        io.BytesIO(content),
+        stream_from_minio(),
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{file_id}_v{version_number}"',
+            "Content-Disposition": f'attachment; filename="{safe_filename}_v{version_number}"',
+            "Content-Length": str(size_bytes),
             "X-File-Version": str(version_number),
-            "X-Content-Hash": content_hash
+            "ETag": f'"{content_hash}"',
+            "Cache-Control": "public, max-age=31536000",
         }
     )
 
