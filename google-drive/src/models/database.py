@@ -1,8 +1,13 @@
 """
 Database models for hierarchical file system with content-addressed storage
+
+Uses UUID for distributed ID generation (no auto-increment hotspots).
+Shard key: parent_id (co-locates folder + children on same shard).
 """
+import hashlib
 from datetime import datetime
 from typing import Optional
+from uuid import uuid4
 
 from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -30,15 +35,34 @@ class FileRecord(Base):
     """
     __tablename__ = "files"
     
-    # Primary key and hierarchy
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Primary key and hierarchy (UUID for distributed generation)
+    id: Mapped[str] = mapped_column(
+        String(36), 
+        primary_key=True, 
+        default=lambda: str(uuid4())
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    parent_id: Mapped[Optional[int]] = mapped_column(
-        Integer, 
+    parent_id: Mapped[Optional[str]] = mapped_column(
+        String(36), 
         ForeignKey('files.id', ondelete='CASCADE'),
         nullable=True,
         index=True
     )
+    
+    # Multi-user sharding
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        index=True,
+        comment="Owner - shard key for multi-user"
+    )
+    root_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        index=True,
+        comment="User's root folder (My Drive) for fast queries"
+    )
+    
     is_folder: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
     # Version tracking (optimistic concurrency control)
@@ -82,6 +106,32 @@ class FileRecord(Base):
             return f"v1/contents/{self.content_hash[:2]}/{self.content_hash[2:4]}/{self.content_hash}"
         return None
     
+    @property
+    def shard_key(self) -> str:
+        """
+        Return shard key for routing queries to correct shard.
+        
+        Multi-user: Uses user_id to co-locate all user's files on same shard.
+        Provides user isolation, quota enforcement, and single-shard queries.
+        
+        Returns:
+            Shard key (user_id)
+        """
+        return self.user_id
+    
+    def get_shard_id(self, num_shards: int = 8) -> int:
+        """
+        Calculate which shard this record belongs to.
+        
+        Args:
+            num_shards: Total number of shards (default 8)
+        
+        Returns:
+            Shard ID (0 to num_shards-1)
+        """
+        hash_value = int(hashlib.md5(self.shard_key.encode()).hexdigest(), 16)
+        return hash_value % num_shards
+    
     def __repr__(self):
         folder_marker = "📁" if self.is_folder else "📄"
         return f"<FileRecord {folder_marker} id={self.id} name={self.name} parent_id={self.parent_id} v{self.version}>"
@@ -95,15 +145,33 @@ class FileVersionHistory(Base):
     - Version history viewing
     - Rollback functionality
     - Audit compliance
+    
+    Note: Denormalizes parent_id for sharding co-location.
     """
     __tablename__ = "file_version_history"
     
-    version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    file_id: Mapped[int] = mapped_column(
-        Integer,
+    version_id: Mapped[str] = mapped_column(
+        String(36), 
+        primary_key=True, 
+        default=lambda: str(uuid4())
+    )
+    file_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey('files.id', ondelete='CASCADE'),
         nullable=False,
         index=True
+    )
+    parent_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+        comment="Denormalized for sharding"
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        index=True,
+        comment="Denormalized - keeps history on same shard as user's files"
     )
     
     # Snapshot of file at this version

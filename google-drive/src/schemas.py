@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 
 class FileMetadataResponse(BaseModel):
     """File/folder metadata response"""
-    id: int
+    id: str
     name: str
-    parent_id: Optional[int]
+    parent_id: Optional[str]
     is_folder: bool
     version: int
     content_hash: Optional[str] = None
@@ -25,7 +25,7 @@ class FileMetadataResponse(BaseModel):
 
 class ListChildrenResponse(BaseModel):
     """Response for listing folder contents"""
-    parent_id: Optional[int]
+    parent_id: Optional[str]
     items: list[FileMetadataResponse]
     total_count: int
 
@@ -33,13 +33,13 @@ class ListChildrenResponse(BaseModel):
 class CreateFolderRequest(BaseModel):
     """Request to create a folder"""
     name: str = Field(..., min_length=1, max_length=255)
-    parent_id: Optional[int] = None
+    parent_id: Optional[str] = None
 
 
 class UploadFileRequest(BaseModel):
     """Metadata for file upload (form data)"""
     name: str = Field(..., min_length=1, max_length=255)
-    parent_id: Optional[int] = None
+    parent_id: Optional[str] = None
 
 
 class UpdateFileRequest(BaseModel):
@@ -49,7 +49,7 @@ class UpdateFileRequest(BaseModel):
 
 class MoveFileRequest(BaseModel):
     """Request to move file/folder"""
-    new_parent_id: Optional[int] = None
+    new_parent_id: Optional[str] = None
 
 
 class RenameFileRequest(BaseModel):

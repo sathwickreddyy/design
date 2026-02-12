@@ -26,7 +26,7 @@ class FileSyncService:
     """
     
     @staticmethod
-    async def get_file(session: AsyncSession, file_id: int) -> Optional[FileRecord]:
+    async def get_file(session: AsyncSession, file_id: str) -> Optional[FileRecord]:
         """Get file/folder by ID"""
         return await session.get(FileRecord, file_id)
     
@@ -63,7 +63,7 @@ class FileSyncService:
     async def create_folder(
         session: AsyncSession,
         name: str,
-        parent_id: Optional[int] = None
+        parent_id: Optional[str] = None
     ) -> FileRecord:
         """
         Create a new folder.
@@ -262,7 +262,7 @@ class FileSyncService:
         return storage_service.download(file_record.storage_key)
     
     @staticmethod
-    async def delete_file(session: AsyncSession, file_id: int) -> bool:
+    async def delete_file(session: AsyncSession, file_id: str) -> bool:
         """
         Delete file/folder (soft delete - only removes metadata).
         
@@ -286,8 +286,8 @@ class FileSyncService:
     @staticmethod
     async def move_file(
         session: AsyncSession,
-        file_id: int,
-        new_parent_id: Optional[int]
+        file_id: str,
+        new_parent_id: Optional[str]
     ) -> FileRecord:
         """
         Move file/folder to different parent.
@@ -327,7 +327,7 @@ class FileSyncService:
     @staticmethod
     async def rename_file(
         session: AsyncSession,
-        file_id: int,
+        file_id: str,
         new_name: str
     ) -> FileRecord:
         """
@@ -355,7 +355,7 @@ class FileSyncService:
     @staticmethod
     async def get_version_history(
         session: AsyncSession,
-        file_id: int
+        file_id: str
     ) -> list[FileVersionHistory]:
         """Get all historical versions of a file"""
         result = await session.execute(

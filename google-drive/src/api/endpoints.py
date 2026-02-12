@@ -61,7 +61,7 @@ async def create_folder(
 
 @router.get("/{file_id}", response_model=FileMetadataResponse)
 async def get_file_metadata(
-    file_id: int,
+    file_id: str,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """Get file/folder metadata by ID"""
@@ -76,7 +76,7 @@ async def get_file_metadata(
 
 @router.get("/{file_id}/children", response_model=ListChildrenResponse)
 async def list_folder_contents(
-    file_id: int,
+    file_id: str,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """List contents of a folder"""
@@ -100,7 +100,7 @@ async def list_folder_contents(
 
 @router.post("/{file_id}/upload", response_model=UploadSuccessResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file_into_folder(
-    file_id: int,
+    file_id: str,
     file: Annotated[UploadFile, File(description="File to upload")],
     expected_version: Annotated[int, Form(description="Expected version (0 for new file)")],
     db: Annotated[AsyncSession, Depends(get_db)]
@@ -183,7 +183,7 @@ async def upload_file_into_folder(
 
 @router.get("/{file_id}/download")
 async def download_file(
-    file_id: int,
+    file_id: str,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """
@@ -265,7 +265,7 @@ async def download_file(
 
 @router.delete("/{file_id}")
 async def delete_file(
-    file_id: int,
+    file_id: str,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """Delete file/folder (removes metadata, content stays for deduplication)"""
@@ -280,7 +280,7 @@ async def delete_file(
 
 @router.patch("/{file_id}/move")
 async def move_file(
-    file_id: int,
+    file_id: str,
     request: MoveFileRequest,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
@@ -300,7 +300,7 @@ async def move_file(
 
 @router.patch("/{file_id}/rename")
 async def rename_file(
-    file_id: int,
+    file_id: str,
     request: RenameFileRequest,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
@@ -320,7 +320,7 @@ async def rename_file(
 
 @router.get("/{file_id}/history", response_model=list[VersionHistoryItem])
 async def get_version_history(
-    file_id: int,
+    file_id: str,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """Get complete version history for a file"""
@@ -341,7 +341,7 @@ async def get_version_history(
 
 @router.get("/{file_id}/version/{version_number}")
 async def download_file_version(
-    file_id: int,
+    file_id: str,
     version_number: int,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
