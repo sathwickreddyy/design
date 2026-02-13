@@ -97,7 +97,7 @@ class StorageService:
         self,
         storage_key: str,
         content_stream: AsyncIterator[bytes]
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, str]:
         """
         Upload content from async stream with hash computation (single-pass).
         
@@ -105,7 +105,7 @@ class StorageService:
         1. Reads from async stream in chunks
         2. Computes SHA256 hash incrementally
         3. Uploads to MinIO
-        4. Returns (content_hash, total_size)
+        4. Returns (content_hash, total_size, final_storage_key)
         
         Benefits:
         - Constant memory usage (only 8KB chunk in RAM at a time)
@@ -113,11 +113,11 @@ class StorageService:
         - Works for files of any size
         
         Args:
-            storage_key: Where to store (can be temp location)
+            storage_key: Temporary key (ignored - final key computed from hash)
             content_stream: Async iterator yielding bytes
             
         Returns:
-            (content_hash, size_bytes) tuple
+            (content_hash, size_bytes, storage_key) tuple
         """
         import tempfile
         import asyncio
@@ -156,7 +156,7 @@ class StorageService:
                 else:
                     logger.info(f"⚡ Deduplication: {final_storage_key} already exists, skipped upload")
                 
-                return content_hash, total_size
+                return content_hash, total_size, final_storage_key
                 
             finally:
                 # Cleanup temp file

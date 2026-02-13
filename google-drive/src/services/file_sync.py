@@ -238,6 +238,7 @@ class FileSyncService:
         # Upload to storage (computes hash, checks dedup)
         logger.info(f"  → TRANSFORM: Streaming file to storage service...")
         content_hash, size_bytes, storage_key = await storage_service.upload_streaming(
+            f"temp/{str(uuid4())}",  # Temp key (real key computed from hash)
             content_stream
         )
         logger.info(f"  ✓ RESULT: Upload complete - hash={content_hash[:8]}..., size={size_bytes} bytes")
@@ -337,6 +338,7 @@ class FileSyncService:
         # Upload new content
         logger.info(f"  → TRANSFORM: Streaming new content to storage...")
         content_hash, size_bytes, storage_key = await storage_service.upload_streaming(
+            f"temp/{str(uuid4())}",  # Temp key (real key computed from hash)
             content_stream
         )
         logger.info(f"  ✓ RESULT: New content uploaded - hash={content_hash[:8]}..., size={size_bytes} bytes")
