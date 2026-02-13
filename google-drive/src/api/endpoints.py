@@ -267,7 +267,7 @@ async def download_file(
             response = await loop.run_in_executor(
                 None,
                 storage_service.client.get_object,
-                storage_service.bucket_name,
+                storage_service.bucket,
                 storage_key
             )
             
@@ -416,7 +416,7 @@ async def download_version(
             response = await loop.run_in_executor(
                 None,
                 storage_service.client.get_object,
-                storage_service.bucket_name,
+                storage_service.bucket,
                 storage_key
             )
             
