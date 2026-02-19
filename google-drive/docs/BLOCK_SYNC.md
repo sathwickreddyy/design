@@ -6,15 +6,16 @@
 
 ## 📚 Table of Contents
 1. [What is Block-Level Differential Sync?](#what-is-block-level-differential-sync)
-2. [Block Splitting & Hashing](#block-splitting--hashing)
-3. [Patching Mechanism (Rsync Algorithm)](#patching-mechanism-rsync-algorithm)
-4. [Conflict Resolution](#conflict-resolution)
-5. [Storage Architecture](#storage-architecture)
-6. [Multipart Upload vs Block Upload](#multipart-upload-vs-block-upload)
-7. [File Reassembly](#file-reassembly)
-8. [Version History with Blocks](#version-history-with-blocks)
-9. [Production Implementation](#production-implementation)
-10. [Interview Cheat Sheet](#interview-cheat-sheet)
+2. [Delta Sync vs Block Sync (Shadow Copies)](#delta-sync-vs-block-sync-shadow-copies)
+3. [Block Splitting & Hashing](#block-splitting--hashing)
+4. [Patching Mechanism (Rsync Algorithm)](#patching-mechanism-rsync-algorithm)
+5. [Conflict Resolution](#conflict-resolution)
+6. [Storage Architecture](#storage-architecture)
+7. [Multipart Upload vs Block Upload](#multipart-upload-vs-block-upload)
+8. [File Reassembly](#file-reassembly)
+9. [Version History with Blocks](#version-history-with-blocks)
+10. [Production Implementation](#production-implementation)
+11. [Interview Cheat Sheet](#interview-cheat-sheet)
 
 ---
 
@@ -53,6 +54,284 @@ With Block Sync (4KB blocks):
 | **Small files** | Overhead (< 50MB) | Better |
 | **Large files** | Essential (> 50MB) | Impractical |
 | **Metadata** | Many blocks/file | One row/file |
+
+---
+
+## Delta Sync vs Block Sync (Shadow Copies)
+
+### What is Delta Sync?
+
+**Delta Sync** (also called **Differential Synchronization**) is a different approach using **shadow copies** to detect and merge changes. Invented by **Neil Fraser** (Google), it's used in **Google Docs** for real-time collaboration.
+
+**Key Idea**: Both client and server maintain **shadow copies** of the document. Changes are computed as **diffs** between the working copy and shadow copy.
+
+### The Three Copies Model
+
+```mermaid
+graph TB
+    subgraph "Client"
+        C1[Client Working Copy<br/>User edits here]
+        C2[Client Shadow Copy<br/>Last synced state]
+    end
+    
+    subgraph "Server"
+        S1[Server Working Copy<br/>Authoritative version]
+        S2[Server Shadow Copy<br/>Last synced state]
+    end
+    
+    C1 -->|"1. Compute diff"| D1[Client Diff]
+    D1 -->|"2. Send to server"| S2
+    S2 -->|"3. Apply to server copy"| S1
+    S1 -->|"4. Compute server diff"| D2[Server Diff]
+    D2 -->|"5. Send to client"| C2
+    C2 -->|"6. Apply to client copy"| C1
+    
+    style C1 fill:#e1f5ff
+    style S1 fill:#e1ffe1
+    style C2 fill:#ffe1e1
+    style S2 fill:#ffe1e1
+```
+
+### How Delta Sync Works (Google Docs Example)
+
+```python
+class DeltaSyncService:
+    """
+    Neil Fraser's Differential Synchronization algorithm.
+    Used by Google Docs for real-time collaboration.
+    """
+    
+    def __init__(self):
+        self.client_working_copy = ""
+        self.client_shadow_copy = ""
+        self.server_working_copy = ""
+        self.server_shadow_copy = ""
+        self.client_version = 0
+        self.server_version = 0
+    
+    def client_sync(self):
+        """Client-side sync: Send diff to server."""
+        
+        # Step 1: Compute diff between working copy and shadow
+        diff = self.compute_diff(
+            self.client_shadow_copy,
+            self.client_working_copy
+        )
+        
+        if not diff:
+            return  # No changes
+        
+        # Step 2: Send diff + version to server
+        response = self.send_to_server({
+            'diff': diff,
+            'client_version': self.client_version,
+            'server_version': self.server_version
+        })
+        
+        # Step 3: Update client shadow with working copy
+        self.client_shadow_copy = self.client_working_copy
+        self.client_version += 1
+        
+        # Step 4: Apply server's edits (if any)
+        if response['server_diff']:
+            self.client_working_copy = self.apply_patch(
+                self.client_working_copy,
+                response['server_diff']
+            )
+            self.client_shadow_copy = self.client_working_copy
+    
+    def server_sync(self, client_request):
+        """Server-side sync: Merge client diff and return server diff."""
+        
+        # Step 1: Apply client's diff to server shadow
+        self.server_shadow_copy = self.apply_patch(
+            self.server_shadow_copy,
+            client_request['diff']
+        )
+        
+        # Step 2: Apply to server working copy (authoritative)
+        self.server_working_copy = self.apply_patch(
+            self.server_working_copy,
+            client_request['diff']
+        )
+        
+        # Step 3: Compute diff from server changes (if any)
+        server_diff = self.compute_diff(
+            self.server_shadow_copy,
+            self.server_working_copy
+        )
+        
+        # Step 4: Update server shadow
+        self.server_shadow_copy = self.server_working_copy
+        self.server_version += 1
+        
+        return {
+            'server_diff': server_diff,
+            'server_version': self.server_version
+        }
+    
+    def compute_diff(self, old_text: str, new_text: str) -> List[str]:
+        """
+        Compute diff using diff-match-patch library.
+        Returns: [(operation, text), ...]
+        
+        Example:
+          old: "Hello world"
+          new: "Hello beautiful world"
+          diff: [('EQUAL', 'Hello '), ('INSERT', 'beautiful '), ('EQUAL', 'world')]
+        """
+        from diff_match_patch import diff_match_patch
+        
+        dmp = diff_match_patch()
+        diffs = dmp.diff_main(old_text, new_text)
+        dmp.diff_cleanupSemantic(diffs)  # Make diffs human-readable
+        
+        return diffs
+    
+    def apply_patch(self, text: str, diffs: List) -> str:
+        """Apply diff operations to text."""
+        from diff_match_patch import diff_match_patch
+        
+        dmp = diff_match_patch()
+        patches = dmp.patch_make(text, diffs)
+        result, _ = dmp.patch_apply(patches, text)
+        
+        return result
+```
+
+### Delta Sync Flow (Real-time Collaboration)
+
+```mermaid
+sequenceDiagram
+    participant A as User A (Client)
+    participant SA as Shadow A (Server)
+    participant S as Server Document
+    participant SB as Shadow B (Server)
+    participant B as User B (Client)
+    
+    Note over A: Types "hello"
+    A->>A: Diff shadow vs working
+    A->>SA: Send diff: +hello<br/>v1
+    SA->>S: Apply: "hello"
+    
+    Note over B: Types "world"
+    B->>B: Diff shadow vs working
+    B->>SB: Send diff: +world<br/>v1
+    SB->>S: Apply: "helloworld"
+    
+    Note over S: Now has both edits
+    
+    S->>SA: Compute diff
+    SA->>A: Send: +world
+    A->>A: Apply: "helloworld"
+    
+    S->>SB: Compute diff
+    SB->>B: Send: +hello
+    B->>B: Apply: "helloworld"
+    
+    Note over A,B: Both clients synchronized!
+```
+
+### Conflict Resolution with Delta Sync
+
+**Case: Both users edit same position**
+
+```
+Initial state: "The quick brown fox"
+
+User A types: "The very quick brown fox" (+very)
+User B types: "The quick red fox" (brown → red)
+
+Server receives both diffs:
+  Diff A: INSERT "very " at position 4
+  Diff B: REPLACE "brown" with "red" at position 10
+
+Operational Transform to resolve conflict:
+  1. Apply A's diff: "The very quick brown fox"
+  2. Adjust B's position: "brown" now at position 15 (shifted by "very ")
+  3. Apply B's diff: "The very quick red fox"
+
+Result: Both edits preserved! ✅
+```
+
+### Delta Sync vs Block Sync: Which to Use?
+
+| Aspect | Delta Sync (Shadow Copies) | Block Sync (Hashing) |
+|--------|---------------------------|----------------------|
+| **Best For** | Text documents, code files, JSON | Binary files, media, large files |
+| **Granularity** | Character/line level | Fixed 4KB blocks |
+| **Merge Quality** | Smart (preserves intent) | Simple (last-write-wins) |
+| **Real-time Collab** | Excellent (Google Docs) | Not suitable |
+| **Offline Editing** | Good (merge on reconnect) | Excellent (block diff) |
+| **Bandwidth** | Very low (diffs tiny) | Low (only changed blocks) |
+| **Storage** | Small (text diffs) | High (many blocks) |
+| **Complexity** | High (OT required) | Medium (hash comparison) |
+| **Examples** | Google Docs, VS Code Live Share | Dropbox, Google Drive (large files) |
+
+### Why Google Uses BOTH
+
+```python
+class GoogleDriveSync:
+    """Google Drive uses both techniques!"""
+    
+    def sync_file(self, file):
+        if file.is_text_based() and file.size < 10_MB:
+            # Text files: Use delta sync for smart merging
+            return self.delta_sync_service.sync(file)
+        
+        elif file.size > 50_MB:
+            # Large files: Use block sync for bandwidth savings
+            return self.block_sync_service.sync(file)
+        
+        else:
+            # Medium binary files: Simple whole-file sync
+            return self.simple_sync_service.sync(file)
+```
+
+### Shadow Copy Storage
+
+```sql
+-- Database schema for shadow copies
+
+CREATE TABLE shadow_copies (
+    shadow_id UUID PRIMARY KEY,
+    file_id UUID NOT NULL,
+    user_id TEXT NOT NULL,
+    shadow_content TEXT NOT NULL,      -- Client's last synced state
+    client_version INT NOT NULL,       -- Client's version number
+    server_version INT NOT NULL,       -- Server's version number
+    last_sync_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    UNIQUE(file_id, user_id)           -- One shadow per user per file
+);
+
+-- Server's authoritative copy
+CREATE TABLE documents (
+    document_id UUID PRIMARY KEY,
+    content TEXT NOT NULL,
+    version INT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### Memory Efficiency
+
+```
+Problem: Storing 3 copies of a 100MB file uses 300MB!
+
+Solution: Sparse deltas
+  - Store only the diff, not the full shadow copy
+  - Reconstruct shadow on-demand: base + apply(all_diffs)
+  - Used by: Git, version control systems
+  
+Example:
+  Base file: 100MB
+  Edit 1: +500 bytes (5KB diff)
+  Edit 2: -200 bytes (3KB diff)
+  Edit 3: +1KB (8KB diff)
+  
+  Total storage: 100MB + 16KB (0.016% overhead) ✅
+```
 
 ---
 
@@ -1363,8 +1642,30 @@ print(f"   Bandwidth saved: {result['bandwidth_saved']:.1f}%")
 5. **Storage**: Metadata in DB, blocks in object storage
 6. **Versioning**: Copy-on-write for changed blocks
 7. **Conflict Resolution**: Last-write-wins, OT, or CRDTs
+8. **Delta Sync**: Shadow copies for text (Google Docs)
+9. **Block Sync**: Fixed-size chunks for binary files (Dropbox)
 
 ### Follow-up Questions & Answers
+
+**Q: What's the difference between delta sync and block sync?**  
+A:
+- **Delta Sync**: Uses shadow copies, computes diffs (character/line level), best for text/code
+  - Example: Google Docs uses differential synchronization for real-time collaboration
+  - Stores 3 copies: client working, client shadow, server working, server shadow
+  - Smart merging with Operational Transform (OT)
+  
+- **Block Sync**: Splits into fixed 4KB blocks, compares hashes, best for binary/large files
+  - Example: Dropbox uses block hashing for file synchronization
+  - Only uploads changed blocks (hash mismatch)
+  - Simple conflict resolution (last-write-wins)
+
+**Q: Why does Google Docs use delta sync instead of block sync?**  
+A:
+- Text edits are character-level (insert "hello" at position 42)
+- Delta sync preserves user intent with OT (operational transform)
+- Multiple users can edit simultaneously without conflicts
+- Diffs are tiny (bytes) vs blocks (4KB minimum)
+- Example: Inserting 1 character = 50 byte diff vs 4KB block upload
 
 **Q: Why 4KB block size?**  
 A: Balance between:
@@ -1466,6 +1767,24 @@ Database Rows:
 
 ## Summary
 
+### Block Sync vs Delta Sync
+
+| Aspect | Block Sync | Delta Sync (Shadow Copies) |
+|--------|-----------|---------------------------|
+| **Core Idea** | Split files into 4KB blocks, upload only changed blocks | Maintain shadow copies, compute diffs, apply patches |
+| **Best For** | Binary files, large files (> 50MB) | Text files, code, documents |
+| **Granularity** | Fixed 4KB blocks | Character/line level |
+| **Bandwidth Savings** | 95-99% for incremental edits | 99%+ for text edits |
+| **Storage** | Metadata in PostgreSQL, blocks in MinIO/S3 | Diffs in database, full content in storage |
+| **Deduplication** | Content-addressed (same hash = same key) | Not applicable (diffs are unique) |
+| **Versioning** | Copy-on-write (reuse unchanged blocks) | Store diffs, reconstruct versions |
+| **Conflicts** | Last-write-wins, simple | Operational Transform (smart merging) |
+| **Real-time Collab** | Not suitable | Excellent (Google Docs) |
+| **Use Cases** | Dropbox, Google Drive (large files) | Google Docs, Notion, VS Code Live Share |
+| **Examples** | Video files, photos, PDFs, binaries | Code files, JSON, Markdown, spreadsheets |
+
+### Block-Level Sync Summary
+
 | Aspect | Details |
 |--------|---------|
 | **Core Idea** | Split files into 4KB blocks, upload only changed blocks |
@@ -1477,7 +1796,10 @@ Database Rows:
 | **Use Cases** | Large files (> 50MB), frequent incremental edits |
 | **Examples** | Google Drive, Dropbox, OneDrive, Git LFS |
 
-**Bottom Line**: Block-level differential sync is essential for cloud storage at scale. It saves bandwidth, reduces latency, and enables efficient versioning. The trade-off is increased complexity in metadata management and synchronization logic.
+**Bottom Line**: 
+- **Block Sync**: Essential for cloud storage at scale with large binary files. Saves bandwidth, reduces latency, enables efficient versioning.
+- **Delta Sync**: Essential for real-time collaboration on text documents. Smart merging preserves user intent, enables simultaneous editing.
+- **Production**: Use block sync for files > 50MB, delta sync for collaborative text editing, simple sync for small files.
 
 ---
 
@@ -1491,3 +1813,4 @@ Database Rows:
 - [Rsync Algorithm](https://rsync.samba.org/tech_report/)
 - [Dropbox Sync Engine](https://dropbox.tech/infrastructure/streaming-file-synchronization)
 - [Google Drive Architecture](https://research.google/pubs/pub36726/)
+- [Neil Fraser's Differential Synchronization](https://neil.fraser.name/writing/sync/)
