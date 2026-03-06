@@ -1,0 +1,102 @@
+# =============================================================================
+# Model Registry - Local AI Assistant
+# =============================================================================
+# This file defines the models available in the stack, their roles,
+# and recommended use cases. It can be consumed by scripts or a future
+# agent framework.
+# =============================================================================
+
+models:
+  # ---------------------------------------------------------------------------
+  # Primary Reasoning Model
+  # ---------------------------------------------------------------------------
+  - name: "deepseek-r1:32b"
+    role: "reasoning"
+    priority: 1
+    description: >
+      DeepSeek-R1 32B. High-quality chain-of-thought reasoning model.
+      Excels at analytical questions, complex debugging, step-by-step
+      problem solving, and mathematical/logical reasoning.
+    use_cases:
+      - "Complex debugging thought process"
+      - "Analytical questions requiring step-by-step reasoning"
+      - "Mathematical and logical problem solving"
+      - "Architecture tradeoff analysis"
+      - "Root cause analysis"
+    estimated_size_gb: 20
+    context_length: 32768
+
+  # ---------------------------------------------------------------------------
+  # Primary Coding Model
+  # ---------------------------------------------------------------------------
+  - name: "qwen2.5-coder:32b"
+    role: "coding"
+    priority: 1
+    description: >
+      Qwen2.5-Coder 32B. Top-tier code generation and understanding model.
+      Handles implementation planning, code generation, refactoring,
+      code review, and backend design.
+    use_cases:
+      - "Code generation (Python, Go, TypeScript, etc.)"
+      - "Implementation planning"
+      - "Refactoring and code review"
+      - "Backend design and FastAPI/Django help"
+      - "Debugging and fixing code"
+      - "Writing tests"
+    estimated_size_gb: 20
+    context_length: 32768
+
+  # ---------------------------------------------------------------------------
+  # Primary General Assistant Model
+  # ---------------------------------------------------------------------------
+  - name: "qwen2.5:32b"
+    role: "general"
+    priority: 1
+    description: >
+      Qwen2.5 32B. Strong general-purpose assistant with long context,
+      multilingual support, and structured output capabilities.
+      Best for system design discussions and technical Q&A.
+    use_cases:
+      - "System design discussions"
+      - "Architecture explanations"
+      - "Technical Q&A and learning"
+      - "Structured output (JSON, YAML, tables)"
+      - "Long-context document analysis"
+      - "Multilingual tasks"
+    estimated_size_gb: 20
+    context_length: 32768
+
+  # ---------------------------------------------------------------------------
+  # Multimodal / Image-Capable Model
+  # ---------------------------------------------------------------------------
+  - name: "gemma3:27b"
+    role: "multimodal"
+    priority: 1
+    description: >
+      Gemma 3 27B. Google's premium local multimodal model.
+      Supports image understanding and serves as a strong
+      alternative general assistant.
+    use_cases:
+      - "Image understanding and analysis"
+      - "Multimodal tasks (text + images)"
+      - "Alternative general assistant"
+      - "Creative writing and brainstorming"
+    estimated_size_gb: 17
+    context_length: 8192
+
+  # ---------------------------------------------------------------------------
+  # Embeddings Model (for RAG)
+  # ---------------------------------------------------------------------------
+  - name: "nomic-embed-text"
+    role: "embeddings"
+    priority: 1
+    description: >
+      Nomic Embed Text. Lightweight embedding model for vector search
+      and retrieval-augmented generation (RAG) workflows.
+      NOT for direct chat.
+    use_cases:
+      - "Document embeddings for RAG"
+      - "Semantic search"
+      - "Similarity scoring"
+    estimated_size_gb: 0.3
+    context_length: 8192

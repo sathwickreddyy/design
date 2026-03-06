@@ -1,0 +1,195 @@
+# =============================================================================
+# Local AI Assistant Stack
+# Mac mini M4 Pro | 48GB Unified Memory | Fully Offline After Initial Setup
+# =============================================================================
+#
+# Services:
+#   ollama        - Local LLM runtime (Metal GPU acceleration on Apple Silicon)
+#   model-puller  - One-shot init container that pulls all configured models
+#   open-webui    - Chat UI connected to Ollama
+#   fastapi       - Optional thin API wrapper for custom agent workflows
+#
+# Memory behavior:
+#   - OLLAMA_MAX_LOADED_MODELS=1 ensures only one 32B model is in RAM at a time
+#   - OLLAMA_KEEP_ALIVE=10m unloads idle models after 10 minutes
+#   - Models live on disk (~20GB each); only the active model uses RAM
+#   - Switching models in Open WebUI unloads the previous one automatically
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Ollama - Local LLM Runtime
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-0.0.0.0}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-10m}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
+    networks:
+      - observability-net
+    healthcheck:
+      # 'ollama list' calls the local API internally — no curl needed in the image.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 60s
+    labels:
+      project_name: "${PROJECT_NAME:-local-ai-assistant}"
+      service_type: "runtime"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Model Puller - Init Container
+  # Pulls all configured models into Ollama on first run.
+  # Idempotent: re-running skips already-downloaded models.
+  # ---------------------------------------------------------------------------
+  model-puller:
+    image: ollama/ollama:latest
+    container_name: model-puller
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "============================================="
+        echo " Model Puller - Waiting for Ollama..."
+        echo "============================================="
+        until OLLAMA_HOST=http://ollama:11434 ollama list > /dev/null 2>&1; do
+          echo "Ollama not ready yet, retrying in 5s..."
+          sleep 5
+        done
+        echo "Ollama is ready. Starting model pulls..."
+
+        MODELS="deepseek-r1:32b qwen2.5-coder:32b qwen2.5:32b gemma3:27b nomic-embed-text"
+        for model in $$MODELS; do
+          echo ""
+          echo "---------------------------------------------"
+          echo " Pulling: $$model"
+          echo "---------------------------------------------"
+          OLLAMA_HOST=http://ollama:11434 ollama pull "$$model"
+          echo " Done: $$model"
+        done
+
+        echo ""
+        echo "============================================="
+        echo " All models pulled successfully."
+        echo "============================================="
+        echo ""
+        echo "Installed models:"
+        OLLAMA_HOST=http://ollama:11434 ollama list
+    restart: "no"
+    networks:
+      - observability-net
+    labels:
+      project_name: "${PROJECT_NAME:-local-ai-assistant}"
+      service_type: "init"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Open WebUI - Chat Interface
+  # ---------------------------------------------------------------------------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - SCARF_NO_ANALYTICS=${SCARF_NO_ANALYTICS:-true}
+      - DO_NOT_TRACK=${DO_NOT_TRACK:-true}
+      - ANONYMIZED_TELEMETRY=${ANONYMIZED_TELEMETRY:-false}
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      - WEBUI_AUTH=${WEBUI_AUTH:-true}
+    networks:
+      - observability-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    labels:
+      project_name: "${PROJECT_NAME:-local-ai-assistant}"
+      service_type: "ui"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # FastAPI Wrapper - Optional Thin API Layer
+  # Uncomment to enable. Useful for custom agent workflows, tool calling, etc.
+  # ---------------------------------------------------------------------------
+  fastapi:
+    build:
+      context: ./app/fastapi
+      dockerfile: Dockerfile
+    container_name: local-ai-fastapi
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "${FASTAPI_PORT:-8100}:8000"
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+    networks:
+      - observability-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      project_name: "${PROJECT_NAME:-local-ai-assistant}"
+      service_type: "api"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - fastapi
+
+# =============================================================================
+# Volumes - Persistent Storage
+# =============================================================================
+volumes:
+  ollama-data:
+    name: ollama-data
+    driver: local
+  open-webui-data:
+    name: open-webui-data
+    driver: local
+
+# =============================================================================
+# Network - External (shared with observability stack)
+# =============================================================================
+networks:
+  observability-net:
+    external: true
