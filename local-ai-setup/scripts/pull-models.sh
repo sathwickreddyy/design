@@ -11,10 +11,20 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 MODELS=(
+  # --- Premium 30B tier ---
   "deepseek-r1:32b"
   "qwen2.5-coder:32b"
   "qwen2.5:32b"
   "gemma3:27b"
+
+  # --- Balanced mid tier (8B-14B) ---
+  "deepseek-r1:14b"
+  "phi4:14b"
+  "gemma3:12b"
+  "llama3.1:8b"
+  "deepseek-r1:8b"
+
+  # --- Embeddings ---
   "nomic-embed-text"
 )
 

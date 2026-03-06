@@ -85,6 +85,147 @@ models:
     context_length: 8192
 
   # ---------------------------------------------------------------------------
+  # Mid-Tier: Balanced Reasoning (fast, less memory)
+  # ---------------------------------------------------------------------------
+  - name: "deepseek-r1:14b"
+    role: "reasoning"
+    priority: 2
+    description: >
+      DeepSeek-R1 14B. Fast chain-of-thought reasoning with significantly
+      lower memory than 32B. Good daily driver for reasoning tasks that don't
+      need maximum depth.
+    use_cases:
+      - "Quick step-by-step reasoning"
+      - "Moderate complexity debugging"
+      - "Faster analytical questions"
+    estimated_size_gb: 9
+    context_length: 32768
+
+  - name: "phi4:14b"
+    role: "general"
+    priority: 2
+    description: >
+      Microsoft Phi-4 14B. Premium mid-tier model punching above its weight
+      class. Strong at reasoning, math, and instruction following.
+    use_cases:
+      - "Fast general questions"
+      - "Instruction following"
+      - "Math and logic"
+      - "When 32B is overkill"
+    estimated_size_gb: 9
+    context_length: 16384
+
+  - name: "gemma3:12b"
+    role: "general"
+    priority: 2
+    description: >
+      Google Gemma 3 12B. Solid mid-tier general assistant. Good balance
+      of speed and quality for everyday tasks.
+    use_cases:
+      - "Quick general questions"
+      - "Faster alternative to gemma3:27b"
+      - "Lighter multimodal tasks"
+    estimated_size_gb: 8
+    context_length: 8192
+
+  - name: "llama3.1:8b"
+    role: "general"
+    priority: 3
+    description: >
+      Meta Llama 3.1 8B. Fast, well-rounded model for lightweight tasks.
+      Best for quick turnaround where quality is secondary to speed.
+    use_cases:
+      - "Quick lookups and simple questions"
+      - "Fast prototyping and brainstorming"
+      - "Low-latency use cases"
+    estimated_size_gb: 5
+    context_length: 128000
+
+  - name: "deepseek-r1:8b"
+    role: "reasoning"
+    priority: 3
+    description: >
+      DeepSeek-R1 8B. Lightweight reasoning model. Fastest option for
+      step-by-step thinking tasks. Good when you want reasoning style
+      without waiting for a 32B model.
+    use_cases:
+      - "Fast reasoning tasks"
+      - "Quick debugging thought process"
+      - "Rapid iterative problem solving"
+    estimated_size_gb: 5
+    context_length: 32768
+
+  # ---------------------------------------------------------------------------
+  # Mid-tier: Balanced Reasoning (Fast)
+  # ---------------------------------------------------------------------------
+  - name: "deepseek-r1:14b"
+    role: "reasoning-fast"
+    priority: 2
+    description: >
+      DeepSeek-R1 14B. Faster reasoning model for iterative debugging, quick
+      analysis, and when 32B response time is too slow.
+    use_cases:
+      - "Quick reasoning and analysis"
+      - "Iterative debugging"
+      - "Step-by-step problems at speed"
+    estimated_size_gb: 9
+    context_length: 32768
+
+  - name: "deepseek-r1:8b"
+    role: "reasoning-light"
+    priority: 3
+    description: >
+      DeepSeek-R1 8B. Lightweight fast reasoning for quick questions and
+      rapid iteration.
+    use_cases:
+      - "Quick reasoning tasks"
+      - "Rapid iteration and exploration"
+    estimated_size_gb: 4.9
+    context_length: 32768
+
+  # ---------------------------------------------------------------------------
+  # Mid-tier: General / Assistant
+  # ---------------------------------------------------------------------------
+  - name: "phi4:14b"
+    role: "general-fast"
+    priority: 2
+    description: >
+      Microsoft Phi-4 14B. Premium mid-tier model with strong reasoning and
+      instruction following. Good balance of quality and speed.
+    use_cases:
+      - "General Q&A at speed"
+      - "Technical explanations"
+      - "Structured output"
+    estimated_size_gb: 8.9
+    context_length: 16384
+
+  - name: "gemma3:12b"
+    role: "general-mid"
+    priority: 2
+    description: >
+      Google Gemma 3 12B. Strong mid-tier multimodal-capable model.
+      Good alternative when 27B is too slow.
+    use_cases:
+      - "General assistant tasks"
+      - "Image understanding (mid-tier)"
+      - "Faster alternative to gemma3:27b"
+    estimated_size_gb: 8
+    context_length: 8192
+
+  - name: "llama3.1:8b"
+    role: "general-light"
+    priority: 3
+    description: >
+      Meta Llama 3.1 8B. Solid lightweight model for fast general tasks,
+      brainstorming, and quick iteration.
+    use_cases:
+      - "Quick general questions"
+      - "Brainstorming and drafts"
+      - "Fast iteration"
+    estimated_size_gb: 4.7
+    context_length: 128000
+
+  # ---------------------------------------------------------------------------
   # Embeddings Model (for RAG)
   # ---------------------------------------------------------------------------
   - name: "nomic-embed-text"
