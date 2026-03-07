@@ -8,25 +8,6 @@
 
 models:
   # ---------------------------------------------------------------------------
-  # Primary Reasoning Model
-  # ---------------------------------------------------------------------------
-  - name: "deepseek-r1:32b"
-    role: "reasoning"
-    priority: 1
-    description: >
-      DeepSeek-R1 32B. High-quality chain-of-thought reasoning model.
-      Excels at analytical questions, complex debugging, step-by-step
-      problem solving, and mathematical/logical reasoning.
-    use_cases:
-      - "Complex debugging thought process"
-      - "Analytical questions requiring step-by-step reasoning"
-      - "Mathematical and logical problem solving"
-      - "Architecture tradeoff analysis"
-      - "Root cause analysis"
-    estimated_size_gb: 20
-    context_length: 32768
-
-  # ---------------------------------------------------------------------------
   # Primary Coding Model
   # ---------------------------------------------------------------------------
   - name: "qwen2.5-coder:32b"
@@ -43,26 +24,6 @@ models:
       - "Backend design and FastAPI/Django help"
       - "Debugging and fixing code"
       - "Writing tests"
-    estimated_size_gb: 20
-    context_length: 32768
-
-  # ---------------------------------------------------------------------------
-  # Primary General Assistant Model
-  # ---------------------------------------------------------------------------
-  - name: "qwen2.5:32b"
-    role: "general"
-    priority: 1
-    description: >
-      Qwen2.5 32B. Strong general-purpose assistant with long context,
-      multilingual support, and structured output capabilities.
-      Best for system design discussions and technical Q&A.
-    use_cases:
-      - "System design discussions"
-      - "Architecture explanations"
-      - "Technical Q&A and learning"
-      - "Structured output (JSON, YAML, tables)"
-      - "Long-context document analysis"
-      - "Multilingual tasks"
     estimated_size_gb: 20
     context_length: 32768
 
