@@ -24,6 +24,10 @@ MODELS=(
   "llama3.1:8b"
   "deepseek-r1:8b"
 
+  # --- Ultra-light speed tier (3-7B) ---
+  "phi3:3.8b"
+  "neural-chat:7b"
+
   # --- Embeddings ---
   "nomic-embed-text"
 )

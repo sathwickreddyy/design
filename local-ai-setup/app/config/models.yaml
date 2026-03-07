@@ -226,6 +226,36 @@ models:
     context_length: 128000
 
   # ---------------------------------------------------------------------------
+  # Ultra-Light: Speed Tier (3-7B)
+  # ---------------------------------------------------------------------------
+  - name: "phi3:3.8b"
+    role: "speed-tier"
+    priority: 3
+    description: >
+      Microsoft Phi-3 3.8B. Ultra-fast model punching above its weight.
+      Best-in-class quality for 3B size. Use when you want instant responses.
+    use_cases:
+      - "Instant answers (8-10 seconds)"
+      - "Quick lookups"
+      - "Lightweight brainstorming"
+      - "Default for fast iteration"
+    estimated_size_gb: 2.2
+    context_length: 128000
+
+  - name: "neural-chat:7b"
+    role: "speed-tier"
+    priority: 3
+    description: >
+      Intel Neural Chat 7B. Optimized for conversational AI, fast and engaging.
+      Better at chat than generic 7B models.
+    use_cases:
+      - "Fast conversational chat (10-15 seconds)"
+      - "Lighter general questions"
+      - "Friendly responses"
+    estimated_size_gb: 4.0
+    context_length: 32768
+
+  # ---------------------------------------------------------------------------
   # Embeddings Model (for RAG)
   # ---------------------------------------------------------------------------
   - name: "nomic-embed-text"

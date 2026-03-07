@@ -74,7 +74,7 @@ services:
         done
         echo "Ollama is ready. Starting model pulls..."
 
-        MODELS="deepseek-r1:32b qwen2.5-coder:32b qwen2.5:32b gemma3:27b nomic-embed-text deepseek-r1:14b phi4:14b gemma3:12b llama3.1:8b deepseek-r1:8b"
+        MODELS="deepseek-r1:32b qwen2.5-coder:32b qwen2.5:32b gemma3:27b nomic-embed-text deepseek-r1:14b phi4:14b gemma3:12b llama3.1:8b deepseek-r1:8b phi3:3.8b neural-chat:7b"
         for model in $$MODELS; do
           echo ""
           echo "---------------------------------------------"
