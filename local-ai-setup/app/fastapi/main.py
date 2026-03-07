@@ -51,7 +51,6 @@ app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
 @app.get(
     "/health",
     summary="Health check",
-    description="Verify that FastAPI and Ollama are both healthy and connected.",
     responses={
         200: {
             "description": "All systems healthy",
@@ -70,7 +69,14 @@ app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
     },
 )
 async def health() -> Dict[str, Any]:
-    """Health check - verifies both FastAPI and Ollama connectivity."""
+    """
+    Health check endpoint.
+    
+    Verifies that both FastAPI and Ollama are running and connected.
+    Returns the Ollama URL and count of available models.
+    
+    Use this to confirm your local AI stack is ready before making requests.
+    """
     logger.info("Health check requested")
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -107,7 +113,6 @@ class ModelsListResponse(BaseModel):
     "/api/v1/models",
     response_model=ModelsListResponse,
     summary="List available models",
-    description="Get a list of all models currently installed in Ollama.",
     responses={
         200: {
             "description": "Successfully retrieved model list",
@@ -129,13 +134,18 @@ class ModelsListResponse(BaseModel):
 )
 async def list_models() -> ModelsListResponse:
     """
-    List all models available in Ollama.
-
-    **Model tiers:**
-    - **Speed tier (3-8B):** phi3, neural-chat, llama3.1, deepseek-r1:8b
-    - **Mid tier (12-14B):** phi4, gemma3:12b, deepseek-r1:14b
-    - **Premium tier (27-32B):** qwen2.5, deepseek-r1:32b, gemma3, qwen-coder
-    - **Embeddings:** nomic-embed-text (not for chat)
+    List all available models.
+    
+    Retrieves the complete list of LLM models currently installed in Ollama,
+    including their disk sizes.
+    
+    **Model categories:**
+    - **Speed tier (3-8B):** phi3, neural-chat, llama3.1, deepseek-r1:8b — 8-20s per response
+    - **Mid tier (12-14B):** phi4, gemma3:12b, deepseek-r1:14b — 15-30s per response
+    - **Premium tier (27-32B):** qwen2.5, deepseek-r1:32b, gemma3, qwen-coder — 30-50s per response
+    - **Embeddings:** nomic-embed-text — for RAG and vector search, not for chat
+    
+    Use this to see what models you have available before making chat requests.
     """
     logger.info("Listing available models")
     try:

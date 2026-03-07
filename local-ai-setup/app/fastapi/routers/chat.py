@@ -75,8 +75,6 @@ class ChatResponse(BaseModel):
     "/chat",
     response_model=ChatResponse,
     summary="Chat with a local LLM model",
-    description="Send a prompt to a local Ollama model and get a response. "
-    "Non-streaming endpoint for simple request/response workflows.",
     responses={
         200: {
             "description": "Successful response",
