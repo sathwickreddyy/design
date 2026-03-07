@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Local/Application
 from routers.chat import router as chat_router
